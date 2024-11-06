@@ -4,6 +4,7 @@ mod map;
 mod quest;
 mod utils;
 mod skill;
+mod items;
 
 use player::Player;
 use map::{Map, Direction};
@@ -19,6 +20,7 @@ use serde_json;
 use std::panic;
 use rand::Rng;
 use enemy::sample_enemies;
+use crate::items::{create_loot_tables};
 
 #[derive(Serialize, Deserialize)]
 struct CharacterSave {
@@ -198,51 +200,58 @@ fn save_game(player: &Player, game_map: &Map, save_folder: &str, character_name:
 
 fn handle_combat(player: &mut Player, mut enemy: Enemy) -> String {
     println!("You've encountered a {}!", enemy.name);
+    let mut total_damage_taken = 0;
+
     loop {
         // Display combat options
         println!("Enemy: {} (Health: {})", enemy.name, enemy.health);
         println!("Your health: {}", player.health);
-        println!("Do you want to (f)ight or (r)un?");
+        println!("Do you want to (f)ight, (h)eavy attack, (m)agic attack, or (r)un?");
         let mut action = String::new();
         io::stdin().read_line(&mut action).expect("Failed to read line");
         let action = action.trim();
 
         match action {
             "f" => {
-                // Player attacks enemy
+                // Regular attack
                 enemy.take_damage(10); // Example player attack damage
                 println!("You hit the {} for 10 damage!", enemy.name);
 
                 if enemy.is_defeated() {
                     println!("You have defeated the {}!", enemy.name);
-                    return format!("Defeated a {}.", enemy.name);
+
+                    // Roll for loot
+                    let loot_tables = create_loot_tables();
+                    let mut rng = rand::thread_rng();
+                    for table_name in vec!["common", "common_food"] {
+                        if let Some(loot_table) = loot_tables.get(table_name) {
+                            for (item_id, quantity, weight) in &loot_table.items {
+                                if rng.gen_range(0.0..100.0) < *weight {
+                                    let item_quantity = if *quantity > 1 {
+                                        rng.gen_range(1..=*quantity)
+                                    } else {
+                                        *quantity
+                                    };
+                                    // Convert item_quantity from u32 to i32
+                                    player.add_item_to_inventory(*item_id, item_quantity as i32);
+                                }
+                            }
+                        }
+                    }
+
+                    return format!("Defeated a {} | +10xp | loot added to inventory.", enemy.name);
                 }
 
-                // Enemy attacks player
+                // Enemy counter-attacks
                 enemy.attack_player(&mut player.health);
-                println!("The {} hits you for {} damage!", enemy.name, enemy.attack);
+                total_damage_taken += enemy.attack;
 
                 if player.health <= 0 {
                     println!("You have been defeated by the {}...", enemy.name);
                     return "You were defeated...".to_string();
                 }
             }
-            "r" => {
-                // Attempt to run away
-                let mut rng = rand::thread_rng();
-                if rng.gen_bool(0.5) {
-                    println!("You successfully ran away!");
-                    return "Ran away from combat.".to_string();
-                } else {
-                    println!("Failed to run away! The {} attacks!", enemy.name);
-                    enemy.attack_player(&mut player.health);
-                    if player.health <= 0 {
-                        println!("You have been defeated by the {}...", enemy.name);
-                        return "You were defeated...".to_string();
-                    }
-                }
-            }
-            _ => println!("Invalid command, please choose 'f' to fight or 'r' to run."),
+            _ => println!("Invalid command."),
         }
     }
 }
@@ -264,9 +273,8 @@ fn game_loop(mut player: Player, mut game_map: Map, quests: Vec<Quest>) {
         // Render the current 30x30 chunk of the map
         println!("{}", game_map.render());
 
-        // Render recent actions
-        println!();
-        println!("Recent Actions:");
+        // Display recent actions
+        println!("\nRecent actions:");
         for action in &recent_actions {
             println!("{}", action);
         }
@@ -294,7 +302,7 @@ fn game_loop(mut player: Player, mut game_map: Map, quests: Vec<Quest>) {
 
                 // Random enemy encounter logic
                 let mut rng = rand::thread_rng();
-                if rng.gen_range(0..100) < 20 {
+                if rng.gen_range(0..100) < 20 {  // 20% chance to encounter an enemy
                     let enemies = sample_enemies();
                     let enemy = enemies[rng.gen_range(0..enemies.len())].clone();
                     new_action = handle_combat(&mut player, enemy);
@@ -311,6 +319,12 @@ fn game_loop(mut player: Player, mut game_map: Map, quests: Vec<Quest>) {
                     }
                 }
                 new_action = "Viewed active quests.".to_string();
+            }
+            "status" => {
+                // Display player status and add to recent actions
+                let status = player.display_status();
+                println!("{}", status);
+                new_action = "Viewed player status.".to_string();
             }
             _ => new_action = "Invalid command.".to_string(),
         }

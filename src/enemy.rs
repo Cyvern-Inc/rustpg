@@ -41,5 +41,8 @@ pub fn sample_enemies() -> Vec<Enemy> {
         Enemy::new("Goblin", 30, 5),
         Enemy::new("Orc", 50, 10),
         Enemy::new("Bandit", 40, 8),
+        Enemy::new("Wolf", 35, 7),
+        Enemy::new("Skeleton", 45, 9),
+        Enemy::new("Troll", 80, 15),
     ]
 }
