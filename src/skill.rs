@@ -1,3 +1,4 @@
+
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -14,49 +15,52 @@ impl Skill {
             name: name.to_string(),
             level: starting_level,
             experience: 0,
-            experience_to_next_level: Skill::calculate_experience_for_level(starting_level + 1),
+            experience_to_next_level: 83,  // Starting experience required for level 2
         }
     }
 
-    pub fn add_experience(&mut self, xp: i32) {
-        // Cap XP at 200,000,000
-        if self.experience >= 200_000_000 {
-            println!("You have reached the XP cap for the {} skill.", self.name);
-            return;
+    // Function to add experience to the skill
+    pub fn add_experience(&mut self, amount: f32) {
+        // Convert to fixed-point (round down)
+        let amount_as_int = (amount * 10.0).floor() as i32;
+
+        // Update experience
+        self.experience += amount_as_int;
+
+        // Cap the experience at 200,000,000 as specified
+        if self.experience > 200_000_000 * 10 {
+            self.experience = 200_000_000 * 10;
         }
 
-        self.experience += xp;
-
-        // Level up if enough XP is accumulated
-        while self.experience >= self.experience_to_next_level && self.level < 99 {
+        // Check for leveling up
+        while self.experience >= self.experience_to_next_level * 10 && self.level < 99 {
             self.level_up();
         }
     }
 
-    fn level_up(&mut self) {
+    // Method to level up the skill (now made public)
+    pub fn level_up(&mut self) {
         self.level += 1;
-        self.experience_to_next_level = Skill::calculate_experience_for_level(self.level + 1);
-        println!("Congratulations! Your {} skill is now level {}!", self.name, self.level);
+        self.experience -= self.experience_to_next_level * 10;
+
+        // Increase experience requirement by approximately 10% for the next level
+        self.experience_to_next_level = ((self.experience_to_next_level as f32) * 1.10) as i32;
+
+        println!("Skill leveled up: {} is now level {}", self.name, self.level);
     }
 
-    fn calculate_experience_for_level(level: i32) -> i32 {
-        let base_experience = 83; // Base XP for level 2
-        let growth_factor = 1.10; // 10% growth per level
-        let mut total_experience = base_experience as f32;
-
-        for _ in 2..level {
-            total_experience *= growth_factor;
-        }
-
-        total_experience.floor() as i32
+    // Display skill information
+    pub fn display_skill_info(&self) {
+        println!("Skill: {}, Level: {}, Experience: {}", self.name, self.level, self.experience / 10);
     }
 }
 
+// Initialize default skills for the player based on the given categories
 pub fn initialize_skills() -> HashMap<String, Skill> {
     let mut skills = HashMap::new();
 
     // Combat Skills
-    skills.insert("Hitpoints".to_string(), Skill::new("Hitpoints", 9));
+    skills.insert("Hitpoints".to_string(), Skill::new("Hitpoints", 1));
     skills.insert("Attack".to_string(), Skill::new("Attack", 1));
     skills.insert("Strength".to_string(), Skill::new("Strength", 1));
     skills.insert("Defense".to_string(), Skill::new("Defense", 1));

@@ -1,3 +1,4 @@
+
 pub struct Enemy {
     pub name: String,
     pub health: i32,
@@ -15,9 +16,12 @@ impl Enemy {
 
     pub fn take_damage(&mut self, amount: i32) {
         self.health -= amount;
+        if self.health < 0 {
+            self.health = 0;
+        }
     }
 
     pub fn is_defeated(&self) -> bool {
-        self.health <= 0
+        self.health == 0
     }
 }
