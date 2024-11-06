@@ -17,6 +17,8 @@ use std::path::Path;
 use serde::{Serialize, Deserialize};
 use serde_json;
 use std::panic;
+use rand::Rng;
+use enemy::sample_enemies;
 
 #[derive(Serialize, Deserialize)]
 struct CharacterSave {
@@ -89,7 +91,7 @@ fn new_game() {
 
     // Initialize player and map
     let mut player = Player::new();
-    let mut game_map = Map::new(300, 300);  // Generate a new map
+    let game_map = Map::new(300, 300);  // Generate a new map
     player.skills = initialize_skills();
 
     // Load sample quests
@@ -194,9 +196,60 @@ fn save_game(player: &Player, game_map: &Map, save_folder: &str, character_name:
     fs::write(&map_save_path, serde_json::to_string(&game_map).unwrap()).expect("Failed to write map file");
 }
 
-fn game_loop(_player: Player, mut game_map: Map, quests: Vec<Quest>) {
-    // Store recent actions for display
+fn handle_combat(player: &mut Player, mut enemy: Enemy) -> String {
+    println!("You've encountered a {}!", enemy.name);
+    loop {
+        // Display combat options
+        println!("Enemy: {} (Health: {})", enemy.name, enemy.health);
+        println!("Your health: {}", player.health);
+        println!("Do you want to (f)ight or (r)un?");
+        let mut action = String::new();
+        io::stdin().read_line(&mut action).expect("Failed to read line");
+        let action = action.trim();
+
+        match action {
+            "f" => {
+                // Player attacks enemy
+                enemy.take_damage(10); // Example player attack damage
+                println!("You hit the {} for 10 damage!", enemy.name);
+
+                if enemy.is_defeated() {
+                    println!("You have defeated the {}!", enemy.name);
+                    return format!("Defeated a {}.", enemy.name);
+                }
+
+                // Enemy attacks player
+                enemy.attack_player(&mut player.health);
+                println!("The {} hits you for {} damage!", enemy.name, enemy.attack);
+
+                if player.health <= 0 {
+                    println!("You have been defeated by the {}...", enemy.name);
+                    return "You were defeated...".to_string();
+                }
+            }
+            "r" => {
+                // Attempt to run away
+                let mut rng = rand::thread_rng();
+                if rng.gen_bool(0.5) {
+                    println!("You successfully ran away!");
+                    return "Ran away from combat.".to_string();
+                } else {
+                    println!("Failed to run away! The {} attacks!", enemy.name);
+                    enemy.attack_player(&mut player.health);
+                    if player.health <= 0 {
+                        println!("You have been defeated by the {}...", enemy.name);
+                        return "You were defeated...".to_string();
+                    }
+                }
+            }
+            _ => println!("Invalid command, please choose 'f' to fight or 'r' to run."),
+        }
+    }
+}
+
+fn game_loop(mut player: Player, mut game_map: Map, quests: Vec<Quest>) {
     let mut recent_actions: VecDeque<String> = VecDeque::with_capacity(3);
+    let mut new_action: String;
 
     loop {
         // Clear the terminal using ANSI escape codes
@@ -214,14 +267,8 @@ fn game_loop(_player: Player, mut game_map: Map, quests: Vec<Quest>) {
         // Render recent actions
         println!();
         println!("Recent Actions:");
-        for (i, action) in recent_actions.iter().enumerate() {
-            if i == recent_actions.len() - 1 {
-                // Most recent action in blue
-                println!("\x1B[34m{}\x1B[0m", action);
-            } else {
-                // Older actions in grey
-                println!("\x1B[90m{}\x1B[0m", action);
-            }
+        for action in &recent_actions {
+            println!("{}", action);
         }
 
         // Prompt for player action
@@ -230,25 +277,28 @@ fn game_loop(_player: Player, mut game_map: Map, quests: Vec<Quest>) {
         io::stdin().read_line(&mut input).expect("Failed to read line");
         let input = input.trim();
 
-        let new_action: String;
-
         match input {
             "q" => break, // Exit game
-            "w" => {
-                game_map.move_player(Direction::Up);
-                new_action = "Player moved up.".to_string();
-            }
-            "s" => {
-                game_map.move_player(Direction::Down);
-                new_action = "Player moved down.".to_string();
-            }
-            "a" => {
-                game_map.move_player(Direction::Left);
-                new_action = "Player moved left.".to_string();
-            }
-            "d" => {
-                game_map.move_player(Direction::Right);
-                new_action = "Player moved right.".to_string();
+            "w" | "s" | "a" | "d" => {
+                let direction = match input {
+                    "w" => Direction::Up,
+                    "s" => Direction::Down,
+                    "a" => Direction::Left,
+                    "d" => Direction::Right,
+                    _ => unreachable!(),
+                };
+
+                // Use reference to direction for movement
+                game_map.move_player(&direction);
+                new_action = format!("Player moved {:?}", direction);
+
+                // Random enemy encounter logic
+                let mut rng = rand::thread_rng();
+                if rng.gen_range(0..100) < 20 {
+                    let enemies = sample_enemies();
+                    let enemy = enemies[rng.gen_range(0..enemies.len())].clone();
+                    new_action = handle_combat(&mut player, enemy);
+                }
             }
             "quests" => {
                 // Display active quests

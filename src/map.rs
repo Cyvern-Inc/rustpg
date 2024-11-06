@@ -79,7 +79,7 @@ impl Map {
     }
 
     // Move the player in the specified direction
-    pub fn move_player(&mut self, direction: Direction) {
+    pub fn move_player(&mut self, direction: &Direction) {
         let (new_x, new_y) = match direction {
             Direction::Up => (self.player_x, self.player_y.saturating_sub(1)),
             Direction::Down => (self.player_x, (self.player_y + 1).min(self.height - 1)),
@@ -98,6 +98,7 @@ impl Map {
     }
 }
 
+#[derive(Debug, Clone)] // Add `Clone` along with `Debug`
 pub enum Direction {
     Up,
     Down,

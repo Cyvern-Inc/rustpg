@@ -1,4 +1,6 @@
+use serde::{Serialize, Deserialize};
 
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Enemy {
     pub name: String,
     pub health: i32,
@@ -22,6 +24,22 @@ impl Enemy {
     }
 
     pub fn is_defeated(&self) -> bool {
-        self.health == 0
+        self.health <= 0
     }
+
+    pub fn attack_player(&self, player_health: &mut i32) {
+        *player_health -= self.attack;
+        if *player_health < 0 {
+            *player_health = 0;
+        }
+    }
+}
+
+// Function to create some sample enemies for testing purposes
+pub fn sample_enemies() -> Vec<Enemy> {
+    vec![
+        Enemy::new("Goblin", 30, 5),
+        Enemy::new("Orc", 50, 10),
+        Enemy::new("Bandit", 40, 8),
+    ]
 }
