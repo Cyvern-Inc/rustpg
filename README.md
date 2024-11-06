@@ -17,7 +17,7 @@ Prerequisites
 
 Installing
 1. Clone the repository:
-   git clone [https://github.com/yourusername/rust_cli_rpg.git](https://github.com/Cyvern-Inc/rustpg)
+   git clone https://github.com/Cyvern-Inc/rustpg
    cd rust_cli_rpg
 
 2. Build the project:
