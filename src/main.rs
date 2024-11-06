@@ -7,7 +7,7 @@ mod skill;
 
 use player::Player;
 use map::{Map, Direction};
-use quest::Quest;
+use quest::{Quest, sample_quests};
 use enemy::Enemy;
 use skill::initialize_skills;
 use std::collections::VecDeque;
@@ -92,11 +92,14 @@ fn new_game() {
     let mut game_map = Map::new(300, 300);  // Generate a new map
     player.skills = initialize_skills();
 
+    // Load sample quests
+    let quests = sample_quests();
+
     // Save character and map data
     save_game(&player, &game_map, &save_folder, &character_name);
 
     // Continue with the game loop
-    game_loop(player, game_map);
+    game_loop(player, game_map, quests);
 }
 
 fn get_recent_save() -> Option<String> {
@@ -165,7 +168,10 @@ fn load_game(save_folder: &str) {
     player.experience = character_data.experience;
     player.skills = initialize_skills(); // Replace with deserialization if detailed skill information needs to be restored
 
-    game_loop(player, map_data);
+    // Load sample quests
+    let quests = sample_quests();
+
+    game_loop(player, map_data, quests);
 }
 
 fn save_game(player: &Player, game_map: &Map, save_folder: &str, character_name: &str) {
@@ -188,7 +194,7 @@ fn save_game(player: &Player, game_map: &Map, save_folder: &str, character_name:
     fs::write(&map_save_path, serde_json::to_string(&game_map).unwrap()).expect("Failed to write map file");
 }
 
-fn game_loop(mut player: Player, mut game_map: Map) {
+fn game_loop(_player: Player, mut game_map: Map, quests: Vec<Quest>) {
     // Store recent actions for display
     let mut recent_actions: VecDeque<String> = VecDeque::with_capacity(3);
 
@@ -198,7 +204,7 @@ fn game_loop(mut player: Player, mut game_map: Map) {
         io::stdout().flush().unwrap();
 
         // Render the top menu
-        println!("(w/a/s/d) move | (status) player status | (train) train a skill");
+        println!("(w/a/s/d) move | (status) player status | (quests) view quests");
         println!("(i) inventory | (m) menu | (q) quit");
         println!();
 
@@ -243,6 +249,18 @@ fn game_loop(mut player: Player, mut game_map: Map) {
             "d" => {
                 game_map.move_player(Direction::Right);
                 new_action = "Player moved right.".to_string();
+            }
+            "quests" => {
+                // Display active quests
+                println!("Active Quests:");
+                for quest in &quests {
+                    if quest.is_completed() {
+                        println!("- {}: Completed", quest.name);
+                    } else {
+                        println!("- {}: {}", quest.name, quest.description);
+                    }
+                }
+                new_action = "Viewed active quests.".to_string();
             }
             _ => new_action = "Invalid command.".to_string(),
         }
