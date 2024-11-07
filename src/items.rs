@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use rand::Rng;
 
 #[derive(Clone, Debug)]
 pub struct Item {
@@ -44,7 +45,7 @@ pub fn create_items() -> HashMap<u32, Item> {
 // Example Loot Table Struct
 #[derive(Debug, Clone)]
 pub struct LootTable {
-    pub items: Vec<(u32, u32, f32)>, // (Item ID, Quantity or Range, Weight)
+    pub items: Vec<(u32, Option<(u32, u32)>, f32)>, // (Item ID, Optional Quantity Range, Weight)
 }
 
 pub fn create_loot_tables() -> HashMap<String, LootTable> {
@@ -52,16 +53,39 @@ pub fn create_loot_tables() -> HashMap<String, LootTable> {
 
     loot_tables.insert("common".to_string(), LootTable {
         items: vec![
-            (100001, 1, 0.5),    // 1 gold coin [0.5%]
-            (100002, 1, 25.0),   // 1-3 silver coins [25%]
-            (100003, 1, 15.0),   // 1-3 copper coins [15%]
-            (100004, 1, 15.0),   // 1 bronze dagger [15%]
-            (100005, 2, 25.0),   // 1-2 leather scraps [25%]
-            (100006, 1, 10.0),   // 1 empty vile [10%]
-            (100007, 3, 80.0),   // 1-3 small bones [80%]
-            (0, 1, 5.0),         // Nothing [5%]
+            (100001, Some((1, 1)), 0.5),      // 1 gold coin [0.5%]
+                       (100002, Some((1, 3)), 25.0),     // 1-3 silver coins [25%]
+                       (100003, Some((1, 3)), 15.0),     // 1-3 copper coins [15%]
+                       (100004, Some((1, 1)), 15.0),     // 1 bronze dagger [15%]
+                       (100005, Some((1, 2)), 25.0),     // 1-2 leather scraps [25%]
+                       (100006, Some((1, 1)), 10.0),     // 1 empty vile [10%]
+                       (100007, Some((1, 3)), 80.0),     // 1-3 small bones [80%]
+                       (0, None, 5.0),                  // Nothing [5%]
         ],
     });
 
     loot_tables
+}
+
+// Function to calculate loot
+pub fn calculate_loot(loot_table: &LootTable) -> HashMap<u32, u32> {
+    let mut rng = rand::thread_rng();
+    let mut loot_result = HashMap::new();
+
+    for &(item_id, quantity_range, drop_chance) in &loot_table.items {
+        let roll: f32 = rng.gen_range(0.0..100.0);
+        if roll < drop_chance {
+            let quantity = if let Some((min, max)) = quantity_range {
+                if min == max {
+                    min
+                } else {
+                    rng.gen_range(min..=max)
+                }
+            } else {
+                1
+            };
+            *loot_result.entry(item_id).or_insert(0) += quantity;
+        }
+    }
+    loot_result
 }
