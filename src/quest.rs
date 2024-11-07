@@ -1,3 +1,6 @@
+use serde::{Serialize, Deserialize};
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Quest {
     pub name: String,
     pub description: String,
@@ -15,6 +18,16 @@ impl Quest {
 
     pub fn complete(&mut self) {
         self.completed = true;
-        println!("Quest completed: {}", self.name);
     }
+
+    pub fn is_completed(&self) -> bool {
+        self.completed
+    }
+}
+
+pub fn sample_quests() -> Vec<Quest> {
+    vec![
+        Quest::new("Retrieve the lost sword", "Find and bring back the lost sword from the goblin camp."),
+        Quest::new("Rescue the villager", "Rescue the villager from the bandits in the forest."),
+    ]
 }
