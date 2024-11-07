@@ -7,6 +7,7 @@ mod skill;
 mod items;
 mod combat;
 
+use std::env;
 use player::Player;
 use map::{Map, Direction};
 use quest::{Quest, sample_quests};
@@ -17,6 +18,7 @@ use std::fs;
 use std::path::Path;
 use serde::{Serialize, Deserialize};
 use serde_json;
+use regex::Regex;
 use std::panic;
 use rand::Rng;
 use enemy::basic_enemies;
@@ -37,20 +39,35 @@ struct CharacterSave {
 }
 
 fn main() {
-    // Set a panic hook to ensure any panic properly prints and cleans up terminal
-    panic::set_hook(Box::new(|panic_info| {
-        println!("Application panicked: {}", panic_info);
-    }));
+    // Retrieve the version and build number from environment variables
+    let version = option_env!("VERSION").unwrap_or("unknown version");
+    let build_number = option_env!("BUILD_NUMBER").unwrap_or("unknown build");
 
-    // Check if the "Saves" folder exists, create if not
+    // Ensure the "Saves" directory exists before starting the game
     let saves_path = Path::new("Saves");
     if !saves_path.exists() {
         fs::create_dir(saves_path).expect("Failed to create Saves folder");
     }
 
-    // Display initial menu
+    // Debug information for environment variable retrieval
+    println!("Debug: VERSION={} BUILD_NUMBER={}", version, build_number);
+
+    // Display game version information at the top of the main menu
     loop {
-        println!("1. New Game\n2. Continue\n3. Load Save\n(q) Quit");
+        // Clear the terminal
+        print!("\x1B[2J\x1B[1;1H");
+        io::stdout().flush().unwrap();
+
+        // Render the game name and version information
+        println!("rustpg version {} build {}\n", version, build_number);
+
+        // Render the main menu
+        println!("1. New Game");
+        println!("2. Continue");
+        println!("3. Load Save");
+        println!("(q)uit");
+
+        // User input and menu handling
         print!("Enter your choice: ");
         io::stdout().flush().unwrap();
         let mut choice = String::new();
@@ -67,7 +84,8 @@ fn main() {
                     load_game(&recent_save);
                     break;
                 } else {
-                    println!("No recent save found.");
+                    println!("No recent save found. Press Enter to continue...");
+                    let _ = io::stdin().read_line(&mut String::new());  // Wait for user input
                 }
             }
             "3" => {
@@ -77,35 +95,83 @@ fn main() {
                 }
             }
             "q" => return,
-            _ => println!("Invalid choice. Please try again."),
+            _ => {
+                println!("Invalid choice. Please try again. Press Enter to continue...");
+                let _ = io::stdin().read_line(&mut String::new());  // Wait for user input
+            }
         }
     }
 }
 
 fn new_game() {
-    // Prompt for character name
-    println!("Enter your character's name: ");
-    let mut character_name = String::new();
-    io::stdin().read_line(&mut character_name).expect("Failed to read line");
-    let character_name = character_name.trim().to_string();
+    loop {
+        // Prompt for character name
+        println!("Enter your character's name (max 32 characters, no special characters):");
+        let mut character_name = String::new();
+        io::stdin().read_line(&mut character_name).expect("Failed to read line");
+        let character_name = character_name.trim().to_string();
 
-    // Create save folder for the character
-    let save_folder = format!("Saves/save1_{}", character_name);
-    fs::create_dir(&save_folder).expect("Failed to create save folder");
+        // Sanitize character name
+        let sanitized_name = sanitize_character_name(&character_name);
 
-    // Initialize player and map
-    let mut player = Player::new();
-    let game_map = Map::new(300, 300);  // Generate a new map
-    player.skills = initialize_skills();
+        // Check if name is too long
+        if sanitized_name.len() > 32 {
+            println!(
+                "The name '{}' cannot be used because it contains more than 32 characters. Please use a different name.",
+                character_name
+            );
+            continue;
+        }
 
-    // Load sample quests
-    let quests = sample_quests();
+        // Check for invalid characters (allowing alphanumeric and spaces only)
+        let valid_name_regex = Regex::new(r"^[a-zA-Z0-9 ]+$").unwrap();
+        if !valid_name_regex.is_match(&sanitized_name) {
+            println!(
+                "The name '{}' cannot be used because it contains special characters. Please use a different name.",
+                character_name
+            );
+            continue;
+        }
 
-    // Save character and map data
-    save_game(&player, &game_map, &save_folder, &character_name);
+        // Create save folder for the character inside the "Saves" directory
+        let save_folder = format!("Saves/{}", sanitized_name);
+        if Path::new(&save_folder).exists() {
+            println!(
+                "The name '{}' is already in use. Please use a different name.",
+                sanitized_name
+            );
+            continue;
+        }
 
-    // Continue with the game loop
-    game_loop(player, game_map, quests, save_folder.clone(), character_name);
+        if let Err(err) = fs::create_dir(&save_folder) {
+            eprintln!("Failed to create save folder: {}", err);
+            println!("Press Enter to continue...");
+            let _ = io::stdin().read_line(&mut String::new());  // Wait for user input before returning
+            return;
+        }
+
+        // Initialize player and map
+        let mut player = Player::new();
+        let game_map = Map::new(300, 300);  // Generate a new map
+        player.skills = initialize_skills();
+
+        // Load sample quests
+        let quests = sample_quests();
+
+        // Save character and map data
+        save_game(&player, &game_map, &save_folder, &sanitized_name);
+
+        // Continue with the game loop
+        game_loop(player, game_map, quests, save_folder.clone(), sanitized_name);
+        break;  // Exit the loop if everything is successful
+    }
+}
+
+fn sanitize_character_name(name: &str) -> String {
+    // Remove leading and trailing spaces, replace consecutive spaces with a single space
+    let trimmed_name = name.trim();
+    let space_reduced_name = Regex::new(r"\s+").unwrap().replace_all(trimmed_name, " ");
+    space_reduced_name.to_string()
 }
 
 fn get_recent_save() -> Option<String> {
@@ -125,10 +191,10 @@ fn load_save_menu() -> Option<String> {
     // List all saves in the "Saves" directory
     let saves_path = Path::new("Saves");
     let save_dirs: Vec<_> = fs::read_dir(saves_path)
-    .expect("Failed to read Saves directory")
-    .filter_map(|entry| entry.ok())
-    .filter(|entry| entry.file_type().unwrap().is_dir())
-    .collect();
+        .expect("Failed to read Saves directory")
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().unwrap().is_dir())
+        .collect();
 
     if save_dirs.is_empty() {
         println!("No saves found.");
@@ -140,13 +206,17 @@ fn load_save_menu() -> Option<String> {
         let save_name = entry.file_name().into_string().unwrap();
         println!("{}. {}", i + 1, save_name);
     }
-    println!("(Backspace) return to main menu\n(q) quit");
+    println!("(b)ack\n(q)uit");
 
     let mut choice = String::new();
     io::stdin().read_line(&mut choice).expect("Failed to read line");
     let choice = choice.trim();
 
     if choice == "q" {
+        return None;
+    }
+
+    if choice == "b" {
         return None;
     }
 
@@ -158,6 +228,7 @@ fn load_save_menu() -> Option<String> {
 
     None
 }
+
 
 fn load_game(save_folder: &str) {
     // Load character data
@@ -207,6 +278,10 @@ fn game_loop(mut player: Player, mut game_map: Map, quests: Vec<Quest>, save_fol
     let mut new_action: String = String::new();
 
     loop {
+        // Clear the terminal using ANSI escape codes
+        print!("\x1B[2J\x1B[1;1H");
+        io::stdout().flush().unwrap();
+
         // Get terminal height to adjust map display size
         let view_size = if let Some((_, height)) = term_size::dimensions() {
             if height >= 44 { // Considering the entire UI (menu, map, actions)
@@ -222,10 +297,6 @@ fn game_loop(mut player: Player, mut game_map: Map, quests: Vec<Quest>, save_fol
 
         // Update the game map view radius based on view size
         game_map.view_radius = view_size / 2;
-
-        // Clear the terminal using ANSI escape codes
-        print!("\x1B[2J\x1B[1;1H");
-        io::stdout().flush().unwrap();
 
         // Render the top menu
         println!("(w/a/s/d) move | (status) player status | (quests) view quests");
@@ -283,9 +354,14 @@ fn game_loop(mut player: Player, mut game_map: Map, quests: Vec<Quest>, save_fol
                         player.in_combat = true; // Set in_combat to true before starting combat
                         new_action = handle_combat(&mut player, enemy, &loot_tables);
                         player.in_combat = false; // Set in_combat to false after combat ends
+
+                        // After combat ends, clear screen to maintain clean UI
+                        print!("\x1B[2J\x1B[1;1H");
+                        io::stdout().flush().unwrap();
                     }
                 }
             }
+            // Existing options for viewing status, inventory, quests etc.
             "status" => {
                 new_action = "Player status viewed".to_string();
                 println!("\n[Status Information]");
@@ -331,6 +407,9 @@ fn game_loop(mut player: Player, mut game_map: Map, quests: Vec<Quest>, save_fol
             }
             _ => {
                 new_action = "Invalid command.".to_string();
+                println!("Invalid command. Please try again.");
+                println!("\nPress Enter to continue...");
+                io::stdin().read_line(&mut String::new()).unwrap();
             }
         }
 
