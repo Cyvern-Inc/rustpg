@@ -1,26 +1,31 @@
 use std::collections::HashMap;
-use crate::skill::{Skill, initialize_skills}; // Proper import for Skill and initialize_skills
-use crate::items::create_items; // Access item information
+use crate::skill::{Skill, initialize_skills};
+use crate::items::create_items;
 use crate::items::{Item, ItemType};
+use crate::quest::Quest;
 
 pub struct Player {
     pub health: i32,
+    pub max_health: i32,
     pub attack: i32,
     pub level: i32,
     pub experience: i32,
-    pub inventory: HashMap<u32, i32>, // Item ID to Quantity
+    pub inventory: HashMap<u32, i32>,
     pub skills: HashMap<String, Skill>,
+    pub active_quest: Option<Quest>,
 }
 
 impl Player {
-    pub fn new() -> Player {
+    pub fn new() -> Self {
         Player {
             health: 100,
+            max_health: 100, // Initialize max_health
             attack: 10,
             level: 1,
             experience: 0,
             inventory: HashMap::new(),
             skills: initialize_skills(),
+            active_quest: None,
         }
     }
     pub fn add_item_to_inventory(&mut self, item_id: u32, quantity: i32) {

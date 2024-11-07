@@ -20,7 +20,8 @@ use serde_json;
 use std::panic;
 use rand::Rng;
 use enemy::sample_enemies;
-use crate::items::{create_loot_tables};
+use crate::items::{create_items, create_loot_tables};
+use term_size;
 
 #[derive(Serialize, Deserialize)]
 struct CharacterSave {
@@ -103,7 +104,7 @@ fn new_game() {
     save_game(&player, &game_map, &save_folder, &character_name);
 
     // Continue with the game loop
-    game_loop(player, game_map, quests);
+    game_loop(player, game_map, quests, save_folder.clone(), character_name);
 }
 
 fn get_recent_save() -> Option<String> {
@@ -162,9 +163,10 @@ fn load_game(save_folder: &str) {
     let character_file_path = format!("{}/character.json", save_folder);
     let character_data: CharacterSave = serde_json::from_str(&fs::read_to_string(&character_file_path).expect("Failed to read character file")).expect("Failed to parse character file");
 
-    // Load map data
-    let map_file_path = format!("{}/map.json", save_folder);
-    let map_data: Map = serde_json::from_str(&fs::read_to_string(&map_file_path).expect("Failed to read map file")).expect("Failed to parse map file");
+    // Load map data from serialized string
+    let map_file_path = format!("{}/map.txt", save_folder);
+    let map_data_str = fs::read_to_string(&map_file_path).expect("Failed to read map file");
+    let map_data = Map::deserialize_map(300, 300, &map_data_str);
 
     let mut player = Player::new();
     player.health = character_data.health;
@@ -175,8 +177,9 @@ fn load_game(save_folder: &str) {
     // Load sample quests
     let quests = sample_quests();
 
-    game_loop(player, map_data, quests);
+    game_loop(player, map_data, quests, save_folder.to_string(), character_data.name);
 }
+
 
 fn save_game(player: &Player, game_map: &Map, save_folder: &str, character_name: &str) {
     // Create character save file
@@ -188,79 +191,139 @@ fn save_game(player: &Player, game_map: &Map, save_folder: &str, character_name:
         skills: vec![], // Placeholder for saving skills
         player_x: game_map.player_x,
         player_y: game_map.player_y,
-        current_map: format!("{}/map.json", save_folder),
+        current_map: format!("{}/map.txt", save_folder),
     };
     let character_save_path = format!("{}/character.json", save_folder);
     fs::write(&character_save_path, serde_json::to_string(&character_save).unwrap()).expect("Failed to write character file");
 
-    // Create map save file
-    let map_save_path = format!("{}/map.json", save_folder);
-    fs::write(&map_save_path, serde_json::to_string(&game_map).unwrap()).expect("Failed to write map file");
+    // Create map save file using serialized RLE map representation
+    let map_save_path = format!("{}/map.txt", save_folder);
+    let serialized_map = game_map.serialize_map();
+    fs::write(&map_save_path, serialized_map).expect("Failed to write map file");
 }
+
 
 fn handle_combat(player: &mut Player, mut enemy: Enemy) -> String {
     println!("You've encountered a {}!", enemy.name);
-    let mut total_damage_taken = 0;
+    let mut rng = rand::thread_rng();
 
     loop {
         // Display combat options
         println!("Enemy: {} (Health: {})", enemy.name, enemy.health);
         println!("Your health: {}", player.health);
         println!("Do you want to (f)ight, (h)eavy attack, (m)agic attack, or (r)un?");
+
         let mut action = String::new();
         io::stdin().read_line(&mut action).expect("Failed to read line");
         let action = action.trim();
 
         match action {
             "f" => {
-                // Regular attack
-                enemy.take_damage(10); // Example player attack damage
-                println!("You hit the {} for 10 damage!", enemy.name);
+                // Player performs a regular attack
+                let damage = 10; // Example player attack damage
+                enemy.take_damage(damage);
+                println!("You hit the {} for {} damage!", enemy.name, damage);
 
                 if enemy.is_defeated() {
                     println!("You have defeated the {}!", enemy.name);
-
-                    // Roll for loot
-                    let loot_tables = create_loot_tables();
-                    let mut rng = rand::thread_rng();
-                    for table_name in vec!["common", "common_food"] {
-                        if let Some(loot_table) = loot_tables.get(table_name) {
-                            for (item_id, quantity, weight) in &loot_table.items {
-                                if rng.gen_range(0.0..100.0) < *weight {
-                                    let item_quantity = if *quantity > 1 {
-                                        rng.gen_range(1..=*quantity)
-                                    } else {
-                                        *quantity
-                                    };
-                                    // Convert item_quantity from u32 to i32
-                                    player.add_item_to_inventory(*item_id, item_quantity as i32);
-                                }
-                            }
-                        }
-                    }
-
-                    return format!("Defeated a {} | +10xp | loot added to inventory.", enemy.name);
+                    return format!("Defeated a {}.", enemy.name);
                 }
 
-                // Enemy counter-attacks
+                // Enemy attacks player
                 enemy.attack_player(&mut player.health);
-                total_damage_taken += enemy.attack;
+                println!("The {} hits you for {} damage!", enemy.name, enemy.attack);
 
                 if player.health <= 0 {
                     println!("You have been defeated by the {}...", enemy.name);
                     return "You were defeated...".to_string();
                 }
             }
-            _ => println!("Invalid command."),
+            "h" => {
+                // Player performs a heavy attack
+                let damage = 20; // Example heavy attack damage, stronger than normal
+                enemy.take_damage(damage);
+                println!("You perform a heavy attack on the {} for {} damage!", enemy.name, damage);
+
+                if enemy.is_defeated() {
+                    println!("You have defeated the {}!", enemy.name);
+                    return format!("Defeated a {} with a heavy attack.", enemy.name);
+                }
+
+                // Enemy retaliates
+                enemy.attack_player(&mut player.health);
+                println!("The {} hits you for {} damage!", enemy.name, enemy.attack);
+
+                if player.health <= 0 {
+                    println!("You have been defeated by the {}...", enemy.name);
+                    return "You were defeated...".to_string();
+                }
+            }
+            "m" => {
+                // Player performs a magic attack
+                if player.skills.get("Magic").is_some() {
+                    let damage = 15; // Example magic attack damage
+                    enemy.take_damage(damage);
+                    println!("You cast a spell on the {} for {} damage!", enemy.name, damage);
+
+                    if enemy.is_defeated() {
+                        println!("You have defeated the {}!", enemy.name);
+                        return format!("Defeated a {} with magic.", enemy.name);
+                    }
+
+                    // Enemy retaliates
+                    enemy.attack_player(&mut player.health);
+                    println!("The {} hits you for {} damage!", enemy.name, enemy.attack);
+
+                    if player.health <= 0 {
+                        println!("You have been defeated by the {}...", enemy.name);
+                        return "You were defeated...".to_string();
+                    }
+                } else {
+                    println!("You don't have enough magic ability to cast a spell!");
+                }
+            }
+            "r" => {
+                // Attempt to run away
+                if rng.gen_bool(0.5) {
+                    println!("You successfully ran away!");
+                    return "Ran away from combat.".to_string();
+                } else {
+                    println!("Failed to run away! The {} attacks!", enemy.name);
+                    enemy.attack_player(&mut player.health);
+                    if player.health <= 0 {
+                        println!("You have been defeated by the {}...", enemy.name);
+                        return "You were defeated...".to_string();
+                    }
+                }
+            }
+            _ => {
+                println!("Invalid command. Please enter 'f', 'h', 'm', or 'r'.");
+            }
         }
     }
 }
 
-fn game_loop(mut player: Player, mut game_map: Map, quests: Vec<Quest>) {
+fn game_loop(mut player: Player, mut game_map: Map, quests: Vec<Quest>, save_folder: String, character_name: String) {
     let mut recent_actions: VecDeque<String> = VecDeque::with_capacity(3);
     let mut new_action: String;
 
     loop {
+        // Get terminal height to adjust map display size
+        let view_size = if let Some((_, height)) = term_size::dimensions() {
+            if height >= 40 { // Considering the entire UI (menu, map, actions)
+                30 // 30x30 chunk
+            } else if height >= 25 {
+                20 // 20x20 chunk
+            } else {
+                10 // 10x10 chunk
+            }
+        } else {
+            30 // Default to 30 if unable to detect terminal size
+        };
+
+        // Update the game map view radius based on view size
+        game_map.view_radius = view_size / 2;
+
         // Clear the terminal using ANSI escape codes
         print!("\x1B[2J\x1B[1;1H");
         io::stdout().flush().unwrap();
@@ -270,11 +333,11 @@ fn game_loop(mut player: Player, mut game_map: Map, quests: Vec<Quest>) {
         println!("(i) inventory | (m) menu | (q) quit");
         println!();
 
-        // Render the current 30x30 chunk of the map
+        // Render the current chunk of the map based on view size
         println!("{}", game_map.render());
 
         // Display recent actions
-        println!("\nRecent actions:");
+        println!("\nRecent Actions:");
         for action in &recent_actions {
             println!("{}", action);
         }
@@ -286,7 +349,10 @@ fn game_loop(mut player: Player, mut game_map: Map, quests: Vec<Quest>) {
         let input = input.trim();
 
         match input {
-            "q" => break, // Exit game
+            "q" => {
+                save_game(&player, &game_map, &save_folder, &character_name);
+                break; // Exit game
+            }
             "w" | "s" | "a" | "d" => {
                 let direction = match input {
                     "w" => Direction::Up,
@@ -308,25 +374,52 @@ fn game_loop(mut player: Player, mut game_map: Map, quests: Vec<Quest>) {
                     new_action = handle_combat(&mut player, enemy);
                 }
             }
+            "status" => {
+                new_action = "Player status viewed".to_string();
+                println!("\n[Status Information]");
+                println!("Total Level: {}", player.level);
+                println!("HP: {}/{}", player.health, player.health); // Assuming max_health can be derived from player health or another attribute
+
+                if let Some(active_quest) = player.active_quest.as_ref() {
+                    println!("Tracking: {}", active_quest.name);
+                } else {
+                    println!("No active quest.");
+                }
+                println!("\nPress Enter to continue...");
+                io::stdin().read_line(&mut String::new()).unwrap();
+            }
             "quests" => {
-                // Display active quests
-                println!("Active Quests:");
-                for quest in &quests {
-                    if quest.is_completed() {
-                        println!("- {}: Completed", quest.name);
-                    } else {
-                        println!("- {}: {}", quest.name, quest.description);
+                if quests.is_empty() {
+                    println!("There are no active quests.");
+                } else {
+                    println!("Active Quests:");
+                    for quest in &quests {
+                        println!("- {}: {}", quest.name, if quest.is_completed() { "Completed" } else { &quest.description });
                     }
                 }
                 new_action = "Viewed active quests.".to_string();
+                println!("\nPress Enter to continue...");
+                io::stdin().read_line(&mut String::new()).unwrap();
             }
-            "status" => {
-                // Display player status and add to recent actions
-                let status = player.display_status();
-                println!("{}", status);
-                new_action = "Viewed player status.".to_string();
+            "i" => {
+                println!("\n[Inventory]");
+                if player.inventory.is_empty() {
+                    println!("Inventory is empty.");
+                } else {
+                    let items = create_items();
+                    for (item_id, quantity) in &player.inventory {
+                        if let Some(item) = items.get(item_id) {
+                            println!("- {} (Quantity: {})", item.name, quantity);
+                        }
+                    }
+                }
+                new_action = "Viewed inventory.".to_string();
+                println!("\nPress Enter to continue...");
+                io::stdin().read_line(&mut String::new()).unwrap();
             }
-            _ => new_action = "Invalid command.".to_string(),
+            _ => {
+                new_action = "Invalid command.".to_string();
+            }
         }
 
         // Add the new action to the recent actions queue
@@ -336,3 +429,4 @@ fn game_loop(mut player: Player, mut game_map: Map, quests: Vec<Quest>) {
         recent_actions.push_back(new_action);
     }
 }
+
