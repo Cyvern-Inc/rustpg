@@ -1,9 +1,10 @@
+use crate::inventory::display_inventory;
 use crate::player::Player;
 use crate::enemy::Enemy;
 use crate::items::{create_items, ItemType};
 use crate::items::{LootTable, calculate_loot};
 use std::collections::HashMap;
-use log::{debug, info, error}; // Import logging macros
+use log::{debug, info};
 use std::io::{self, Write};
 use rand::Rng;
 
@@ -58,7 +59,7 @@ pub fn handle_combat(player: &mut Player, mut enemy: Enemy, loot_tables: &HashMa
             debug!("{} hit player for {} damage", enemy.name, enemy.attack);
             combat_action_message = format!(
                 "You performed a charged attack for {} damage!\nThe {} hits you for {} damage!",
-                10 * 3, enemy.name, enemy.attack
+                charge_damage, enemy.name, enemy.attack
             );
 
             // Check if the player has been defeated
@@ -115,8 +116,11 @@ pub fn handle_combat(player: &mut Player, mut enemy: Enemy, loot_tables: &HashMa
                     );
                 },
                 "i" => {
-                    // Show inventory and manage usage as a separate view
-                    handle_inventory_in_combat(player);
+                    // Use the new display_inventory function during combat
+                    display_inventory(player, Some("Consumable"));
+
+                    println!("\nPress Enter to continue combat...");
+                    let _ = io::stdin().read_line(&mut String::new()).unwrap();
 
                     // Re-render combat screen after inventory closes
                     continue; // Do not advance combat, re-render combat screen
@@ -180,65 +184,20 @@ fn spell_attack(player: &mut Player, enemy: &mut Enemy) {
     }
 }
 
-fn charged_attack(player: &mut Player, enemy: &mut Enemy, charge_damage: i32) {
+fn charged_attack(_player: &mut Player, enemy: &mut Enemy, charge_damage: i32) { // Prefixed unused variable with underscore
     enemy.take_damage(charge_damage);
     debug!("Player performed a charged attack for {} damage!", charge_damage);
     println!("\nYou performed a charged attack for {} damage!", charge_damage);
 }
 
-fn handle_inventory_in_combat(player: &mut Player) {
-    loop {
-        // Clear terminal and display only the inventory
-        print!("\x1B[2J\x1B[1;1H");
-        io::stdout().flush().unwrap();
-
-        println!("\n[Consumable Items]");
-        if player.inventory.is_empty() {
-            println!("You have no items to use.");
-        } else {
-            let items = create_items();
-            let mut consumables = vec![];
-            for (item_id, quantity) in &player.inventory {
-                if let Some(item) = items.get(item_id) {
-                    if matches!(item.item_type, ItemType::Consumable) && *quantity > 0 {
-                        consumables.push((item.clone(), *quantity));
-                    }
-                }
-            }
-
-            if consumables.is_empty() {
-                println!("You have no consumable items.");
-            } else {
-                for (item, quantity) in &consumables {
-                    println!("- {} (Quantity: {})", item.name, quantity);
-                }
-                println!("\nEnter the name of the item you wish to use (or press Enter to exit):");
-                let mut item_name = String::new();
-                io::stdin().read_line(&mut item_name).expect("Failed to read line");
-                let item_name = item_name.trim();
-
-                if item_name.is_empty() {
-                    // Exit inventory
-                    break;
-                }
-
-                if let Some((item, quantity)) = consumables.iter_mut().find(|(item, _)| item.name.eq_ignore_ascii_case(item_name)) {
-                    if *quantity > 0 {
-                        println!("\nYou used {}!", item.name);
-                        player.consume_item(item.id);
-                        *quantity -= 1;
-                    } else {
-                        println!("\nYou don't have any {} left.", item.name);
-                    }
-                } else {
-                    println!("\nInvalid item selection.");
-                }
-            }
-        }
-
-        println!("\nPress Enter to return to combat...");
-        io::stdin().read_line(&mut String::new()).unwrap();
-        break;
+pub fn display_inventory_combat(player: &Player, filter: Option<&str>) {
+    // Example implementation of display_inventory function
+    if let Some(filter_type) = filter {
+        debug!("Displaying inventory for player: {:?} with filter: {}", player, filter_type);
+        // Logic to filter inventory based on filter_type
+    } else {
+        debug!("Displaying full inventory for player: {:?}", player);
+        // Logic to display full inventory
     }
 }
 

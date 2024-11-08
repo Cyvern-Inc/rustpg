@@ -6,10 +6,12 @@ mod utils;
 mod skill;
 mod items;
 mod combat;
+mod inventory;
 
 use std::env;
 use player::Player;
 use map::{Map, Direction};
+use crate::skill::Skill;
 use quest::{Quest, sample_quests};
 use skill::initialize_skills;
 use std::collections::VecDeque;
@@ -22,9 +24,11 @@ use regex::Regex;
 use std::panic;
 use rand::Rng;
 use enemy::basic_enemies;
-use crate::items::{create_items, create_loot_tables};
+use crate::items::{create_items, create_loot_tables, get_starting_items}; // Updated import to include get_starting_items
 use crate::combat::handle_combat;
 use term_size;
+use std::collections::HashMap;
+use crate::inventory::display_inventory;
 
 #[derive(Serialize, Deserialize)]
 struct CharacterSave {
@@ -36,6 +40,7 @@ struct CharacterSave {
     player_x: usize,
     player_y: usize,
     current_map: String,
+    inventory: std::collections::HashMap<u32, u32>,
 }
 
 fn main() {
@@ -233,22 +238,36 @@ fn load_save_menu() -> Option<String> {
 fn load_game(save_folder: &str) {
     // Load character data
     let character_file_path = format!("{}/character.json", save_folder);
-    let character_data: CharacterSave = serde_json::from_str(&fs::read_to_string(&character_file_path).expect("Failed to read character file")).expect("Failed to parse character file");
+    let character_data: CharacterSave = serde_json::from_str(&fs::read_to_string(&character_file_path)
+    .expect("Failed to read character file"))
+    .expect("Failed to parse character file");
 
     // Load map data from serialized string
     let map_file_path = format!("{}/map.txt", save_folder);
     let map_data_str = fs::read_to_string(&map_file_path).expect("Failed to read map file");
     let map_data = Map::deserialize_map(300, 300, &map_data_str);
 
+    // Create new player object and load saved data into it
     let mut player = Player::new();
+    // player.name = character_data.name; // This line should be removed or refactored
     player.health = character_data.health;
     player.level = character_data.level;
     player.experience = character_data.experience;
-    player.skills = initialize_skills(); // Replace with deserialization if detailed skill information needs to be restored
 
-    // Load sample quests
+    // Load skills from save data
+    player.skills = character_data.skills.into_iter()
+    .map(|(skill_name, level, experience)| {
+        (skill_name, Skill { level, experience, ..Default::default() }) // Assuming Skill has a Default trait
+    })
+    .collect();
+
+    // Load inventory from save data (assuming inventory is a field in CharacterSave)
+    player.inventory = character_data.inventory;
+
+    // Load sample quests (you can replace this with more advanced quest loading logic if required)
     let quests = sample_quests();
 
+    // Start the game loop with the loaded data
     game_loop(player, map_data, quests, save_folder.to_string(), character_data.name);
 }
 
@@ -263,6 +282,7 @@ fn save_game(player: &Player, game_map: &Map, save_folder: &str, character_name:
         player_x: game_map.player_x,
         player_y: game_map.player_y,
         current_map: format!("{}/map.txt", save_folder),
+        inventory: player.inventory.clone(), // Add inventory here
     };
     let character_save_path = format!("{}/character.json", save_folder);
     fs::write(&character_save_path, serde_json::to_string(&character_save).unwrap()).expect("Failed to write character file");
@@ -390,20 +410,9 @@ fn game_loop(mut player: Player, mut game_map: Map, quests: Vec<Quest>, save_fol
                 io::stdin().read_line(&mut String::new()).unwrap();
             }
             "i" => {
-                println!("\n[Inventory]");
-                if player.inventory.is_empty() {
-                    println!("Inventory is empty.");
-                } else {
-                    let items = create_items();
-                    for (item_id, quantity) in &player.inventory {
-                        if let Some(item) = items.get(item_id) {
-                            println!("- {} (Quantity: {})", item.name, quantity);
-                        }
-                    }
-                }
+                // Use the new display_inventory function
+                display_inventory(&mut player, None);  // When accessed outside combat, show all items
                 new_action = "Viewed inventory.".to_string();
-                println!("\nPress Enter to continue...");
-                io::stdin().read_line(&mut String::new()).unwrap();
             }
             _ => {
                 new_action = "Invalid command.".to_string();

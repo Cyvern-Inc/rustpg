@@ -1,16 +1,17 @@
 use std::collections::HashMap;
 use crate::skill::{Skill, initialize_skills};
 use crate::items::create_items;
-use crate::items::{Item, ItemType};
+use crate::items::{ItemType, get_starting_items};
 use crate::quest::Quest;
 
+#[derive(Debug)]
 pub struct Player {
     pub health: i32,
     pub max_health: i32,
     pub attack: i32,
     pub level: i32,
     pub experience: i32,
-    pub inventory: HashMap<u32, i32>,
+    pub inventory: HashMap<u32, u32>,
     pub skills: HashMap<String, Skill>,
     pub active_quest: Option<Quest>,
     pub in_combat: bool, // Field to track whether the player is in combat or not
@@ -18,7 +19,7 @@ pub struct Player {
 
 impl Player {
     pub fn new() -> Self {
-        Player {
+        let mut player = Player {
             health: 100,
             max_health: 100, // Initialize max_health
             attack: 10,
@@ -28,11 +29,19 @@ impl Player {
             skills: initialize_skills(),
             active_quest: None,
             in_combat: false, // Initially not in combat
-        }
+        };
+        player.add_starting_items();
+        player
     }
 
-    pub fn add_item_to_inventory(&mut self, item_id: u32, quantity: i32) {
+    pub fn add_item_to_inventory(&mut self, item_id: u32, quantity: u32) {
         *self.inventory.entry(item_id).or_insert(0) += quantity;
+    }
+
+    pub fn add_starting_items(&mut self) {
+        for (item_id, quantity) in get_starting_items() {
+            self.add_item_to_inventory(item_id, quantity);
+        }
     }
 
     pub fn display_inventory(&self) {
@@ -98,8 +107,8 @@ impl Player {
 
     // Add loot to player's inventory
     pub fn add_loot(&mut self, loot: &HashMap<u32, u32>) {
-        for (item_id, quantity) in loot {
-            *self.inventory.entry(*item_id).or_insert(0) += *quantity as i32;
+        for (&item_id, &quantity) in loot {
+            *self.inventory.entry(item_id).or_insert(0) += quantity;
         }
     }
 

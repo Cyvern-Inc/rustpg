@@ -1,7 +1,7 @@
 
 use std::collections::HashMap;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct Skill {
     pub name: String,
     pub level: i32,
