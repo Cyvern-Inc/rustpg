@@ -1,4 +1,4 @@
-use crate::inventory::display_inventory;
+use crate::inventory::{display_inventory, interact_with_item};
 use crate::player::Player;
 use crate::enemy::Enemy;
 use crate::items::{create_items, ItemType};
@@ -26,35 +26,31 @@ pub fn handle_combat(player: &mut Player, mut enemy: Enemy, loot_tables: &HashMa
 
         // Display combat status and previous round actions
         if combat_action_message.is_empty() {
-            // If combat just started, display encounter text
             println!("\nYou've encountered a {}!", enemy.name);
         } else {
-            // Display action messages from the previous round
             println!("\n{}", combat_action_message);
         }
 
-        // Print a gap for clarity
         println!();
 
         // Display enemy and player health
         println!("Enemy: {} (Health: {})", enemy.name, enemy.health);
         println!("Your health: {}\n", player.health);
 
-        // If charging, execute the charged attack in this round
+        // Handle the charged attack
         if charging {
             println!("Press Enter to continue combat...");
             io::stdin().read_line(&mut String::new()).unwrap();
 
             charged_attack(player, &mut enemy, charge_damage);
-            charging = false; // Reset charging flag
-            charge_damage = 0; // Reset charge damage
+            charging = false;
+            charge_damage = 0;
 
             if enemy.is_defeated() {
                 info!("Enemy {} has been defeated", enemy.name);
                 return handle_enemy_defeat(player, &enemy, loot_tables);
             }
 
-            // Enemy attacks after player’s charged attack
             enemy.attack_player(&mut player.health);
             debug!("{} hit player for {} damage", enemy.name, enemy.attack);
             combat_action_message = format!(
@@ -62,7 +58,6 @@ pub fn handle_combat(player: &mut Player, mut enemy: Enemy, loot_tables: &HashMa
                 charge_damage, enemy.name, enemy.attack
             );
 
-            // Check if the player has been defeated
             if player.health <= 0 {
                 info!("Player has been defeated by {}", enemy.name);
                 return handle_player_defeat(player, &enemy);
@@ -86,24 +81,22 @@ pub fn handle_combat(player: &mut Player, mut enemy: Enemy, loot_tables: &HashMa
                 },
                 "c" => {
                     charging = true;
-                    charge_damage = 10 * 3; // Define charged attack damage
+                    charge_damage = 10 * 3;
                     info!("Player is preparing a charged attack.");
                     combat_action_message = format!(
                         "You are preparing a charged attack...\nThe {} hits you for {} damage!",
                         enemy.name, enemy.attack
                     );
 
-                    // Let the enemy attack while the player charges
                     enemy.attack_player(&mut player.health);
                     debug!("{} hit player for {} damage", enemy.name, enemy.attack);
 
-                    // Check if the player has been defeated
                     if player.health <= 0 {
                         info!("Player has been defeated by {}", enemy.name);
                         return handle_player_defeat(player, &enemy);
                     }
 
-                    continue; // Continue to the next iteration after updating the message
+                    continue;
                 },
                 "s" => {
                     spell_attack(player, &mut enemy);
@@ -117,12 +110,11 @@ pub fn handle_combat(player: &mut Player, mut enemy: Enemy, loot_tables: &HashMa
                 },
                 "i" => {
                     // Use the new display_inventory function during combat
-                    display_inventory(player, Some("Consumable"));
+                    // Only display consumables
+                    display_inventory(player, Some(ItemType::Consumable));
 
-                    println!("\nPress Enter to continue combat...");
-                    let _ = io::stdin().read_line(&mut String::new()).unwrap();
-
-                    // Re-render combat screen after inventory closes
+                    // Refresh combat display after using an item
+                    // No additional manual prompts are needed
                     continue; // Do not advance combat, re-render combat screen
                 },
                 "r" => {
@@ -136,31 +128,27 @@ pub fn handle_combat(player: &mut Player, mut enemy: Enemy, loot_tables: &HashMa
                             enemy.name, enemy.attack
                         );
 
-                        // Let the enemy attack if running away fails
                         enemy.attack_player(&mut player.health);
                         debug!("{} hit player for {} damage", enemy.name, enemy.attack);
 
-                        // Check if the player has been defeated
                         if player.health <= 0 {
                             info!("Player has been defeated by {}", enemy.name);
                             return handle_player_defeat(player, &enemy);
                         }
 
-                        continue; // Update message and continue to next round
+                        continue;
                     }
                 },
                 _ => {
                     println!("\nInvalid command. Please enter 'm', 'c', 's', 'i', or 'r'.");
-                    continue; // Invalid command, ask again
+                    continue;
                 }
             }
 
-            // Enemy attacks if not defeated
             enemy.attack_player(&mut player.health);
             debug!("{} hit player for {} damage", enemy.name, enemy.attack);
         }
 
-        // Check if player is defeated
         if player.health <= 0 {
             info!("Player has been defeated by {}", enemy.name);
             return handle_player_defeat(player, &enemy);
@@ -188,17 +176,6 @@ fn charged_attack(_player: &mut Player, enemy: &mut Enemy, charge_damage: i32) {
     enemy.take_damage(charge_damage);
     debug!("Player performed a charged attack for {} damage!", charge_damage);
     println!("\nYou performed a charged attack for {} damage!", charge_damage);
-}
-
-pub fn display_inventory_combat(player: &Player, filter: Option<&str>) {
-    // Example implementation of display_inventory function
-    if let Some(filter_type) = filter {
-        debug!("Displaying inventory for player: {:?} with filter: {}", player, filter_type);
-        // Logic to filter inventory based on filter_type
-    } else {
-        debug!("Displaying full inventory for player: {:?}", player);
-        // Logic to display full inventory
-    }
 }
 
 fn handle_enemy_defeat(player: &mut Player, enemy: &Enemy, loot_tables: &HashMap<String, LootTable>) -> String {
@@ -247,4 +224,14 @@ fn handle_player_defeat(player: &mut Player, enemy: &Enemy) -> String {
     println!("You have been defeated by the {}...", enemy.name);
     player.in_combat = false;
     "You were defeated...".to_string()
+}
+
+fn check_combat_end(player: &mut Player, enemy: &mut Enemy, loot_tables: &HashMap<String, LootTable>) -> Option<String> {
+    if enemy.is_defeated() {
+        Some(handle_enemy_defeat(player, enemy, loot_tables))
+    } else if player.health <= 0 {
+        Some(handle_player_defeat(player, enemy))
+    } else {
+        None
+    }
 }

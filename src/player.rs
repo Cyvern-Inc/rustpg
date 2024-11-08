@@ -18,6 +18,30 @@ pub struct Player {
 }
 
 impl Player {
+    pub fn use_item_by_name(&mut self, item_name: &str) -> Option<()> {
+        let items = create_items(); // Get the complete item list
+
+        // Search for the item in the inventory by name
+        if let Some((item_id, quantity)) = self.inventory.iter_mut()
+            .find(|(item_id, &mut qty)| {
+                if qty > 0 {
+                    if let Some(item) = items.get(item_id) {
+                        return item.name.eq_ignore_ascii_case(item_name);
+                    }
+                }
+                false
+            })
+        {
+            // If the item is consumable and has quantity, use it
+            if *quantity > 0 {
+                *quantity -= 1;
+                println!("\nYou used {}!", item_name);
+                return Some(());
+            }
+        }
+
+        None // Return None if the item could not be used
+    }
     pub fn new() -> Self {
         let mut player = Player {
             health: 100,
