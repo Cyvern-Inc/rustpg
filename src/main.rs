@@ -16,13 +16,14 @@ use quest::{Quest, sample_quests};
 use skill::initialize_skills;
 use std::collections::VecDeque;
 use std::io::{self, Write};
-use std::fs;
+use std::fs::{self, copy, create_dir_all, remove_dir_all};
 use std::path::Path;
 use serde::{Serialize, Deserialize};
 use serde_json;
 use regex::Regex;
 use std::panic;
 use rand::Rng;
+use chrono::{DateTime, Local};
 use enemy::basic_enemies;
 use crate::items::{create_items, create_loot_tables, get_starting_items}; // Updated import to include get_starting_items
 use crate::combat::handle_combat;
@@ -44,65 +45,50 @@ struct CharacterSave {
 }
 
 fn main() {
-    // Retrieve the version and build number from environment variables
     let version = option_env!("VERSION").unwrap_or("unknown version");
     let build_number = option_env!("BUILD_NUMBER").unwrap_or("unknown build");
 
-    // Ensure the "Saves" directory exists before starting the game
     let saves_path = Path::new("Saves");
     if !saves_path.exists() {
         fs::create_dir(saves_path).expect("Failed to create Saves folder");
     }
 
-    // Debug information for environment variable retrieval
-    println!("Debug: VERSION={} BUILD_NUMBER={}", version, build_number);
-
-    // Display game version information at the top of the main menu
     loop {
-        // Clear the terminal
         print!("\x1B[2J\x1B[1;1H");
         io::stdout().flush().unwrap();
 
-        // Render the game name and version information
         println!("rustpg version {} build {}\n", version, build_number);
 
-        // Render the main menu
         println!("1. New Game");
         println!("2. Continue");
         println!("3. Load Save");
-        println!("(q)uit");
+        println!("\n(q)uit");
 
-        // User input and menu handling
-        print!("Enter your choice: ");
+        print!("\nEnter your choice: ");
         io::stdout().flush().unwrap();
         let mut choice = String::new();
         io::stdin().read_line(&mut choice).expect("Failed to read line");
         let choice = choice.trim();
 
         match choice {
-            "1" => {
-                new_game();
-                break;
-            }
+            "1" => new_game(),
             "2" => {
                 if let Some(recent_save) = get_recent_save() {
                     load_game(&recent_save);
-                    break;
                 } else {
                     println!("No recent save found. Press Enter to continue...");
-                    let _ = io::stdin().read_line(&mut String::new());  // Wait for user input
+                    let _ = io::stdin().read_line(&mut String::new());
                 }
             }
             "3" => {
                 if let Some(save) = load_save_menu() {
                     load_game(&save);
-                    break;
                 }
             }
-            "q" => return,
+            "q" => std::process::exit(0),
             _ => {
                 println!("Invalid choice. Please try again. Press Enter to continue...");
-                let _ = io::stdin().read_line(&mut String::new());  // Wait for user input
+                let _ = io::stdin().read_line(&mut String::new());
             }
         }
     }
@@ -110,65 +96,65 @@ fn main() {
 
 fn new_game() {
     loop {
-        // Prompt for character name
+        print!("\x1B[2J\x1B[1;1H");
+        io::stdout().flush().unwrap();
+        println!("rustpg version {} build {}\n", option_env!("VERSION").unwrap_or("unknown version"), option_env!("BUILD_NUMBER").unwrap_or("unknown build"));
+
         println!("Enter your character's name (max 32 characters, no special characters):");
+        println!("(b)ack\n(q)uit");
+
+        print!("\nEnter your choice: ");
+        io::stdout().flush().unwrap();
         let mut character_name = String::new();
         io::stdin().read_line(&mut character_name).expect("Failed to read line");
-        let character_name = character_name.trim().to_string();
+        let character_name = character_name.trim();
 
-        // Sanitize character name
-        let sanitized_name = sanitize_character_name(&character_name);
+        if character_name == "q" {
+            std::process::exit(0);
+        } else if character_name == "b" {
+            break;
+        }
 
-        // Check if name is too long
+        let sanitized_name = if character_name.starts_with('*') {
+            character_name[1..].to_string()
+        } else {
+            character_name.to_string()
+        };
+
+        let sanitized_name = sanitize_character_name(&sanitized_name);
         if sanitized_name.len() > 32 {
-            println!(
-                "The name '{}' cannot be used because it contains more than 32 characters. Please use a different name.",
-                character_name
-            );
+            println!("The name '{}' cannot be used because it contains more than 32 characters. Please use a different name.", sanitized_name);
             continue;
         }
 
-        // Check for invalid characters (allowing alphanumeric and spaces only)
         let valid_name_regex = Regex::new(r"^[a-zA-Z0-9 ]+$").unwrap();
         if !valid_name_regex.is_match(&sanitized_name) {
-            println!(
-                "The name '{}' cannot be used because it contains special characters. Please use a different name.",
-                character_name
-            );
+            println!("The name '{}' cannot be used because it contains special characters. Please use a different name.", sanitized_name);
             continue;
         }
 
-        // Create save folder for the character inside the "Saves" directory
         let save_folder = format!("Saves/{}", sanitized_name);
         if Path::new(&save_folder).exists() {
-            println!(
-                "The name '{}' is already in use. Please use a different name.",
-                sanitized_name
-            );
+            println!("The name '{}' is already in use. Please use a different name.", sanitized_name);
             continue;
         }
 
         if let Err(err) = fs::create_dir(&save_folder) {
             eprintln!("Failed to create save folder: {}", err);
             println!("Press Enter to continue...");
-            let _ = io::stdin().read_line(&mut String::new());  // Wait for user input before returning
+            let _ = io::stdin().read_line(&mut String::new());
             return;
         }
 
-        // Initialize player and map
         let mut player = Player::new();
-        let game_map = Map::new(300, 300);  // Generate a new map
+        let game_map = Map::new(300, 300);
         player.skills = initialize_skills();
-
-        // Load sample quests
         let quests = sample_quests();
 
-        // Save character and map data
         save_game(&player, &game_map, &save_folder, &sanitized_name);
 
-        // Continue with the game loop
         game_loop(player, game_map, quests, save_folder.clone(), sanitized_name);
-        break;  // Exit the loop if everything is successful
+        break;
     }
 }
 
@@ -195,45 +181,159 @@ fn get_recent_save() -> Option<String> {
 fn load_save_menu() -> Option<String> {
     // List all saves in the "Saves" directory
     let saves_path = Path::new("Saves");
-    let save_dirs: Vec<_> = fs::read_dir(saves_path)
-        .expect("Failed to read Saves directory")
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.file_type().unwrap().is_dir())
-        .collect();
+    let mut save_dirs: Vec<_> = fs::read_dir(saves_path)
+    .expect("Failed to read Saves directory")
+    .filter_map(|entry| entry.ok())
+    .filter(|entry| entry.file_type().unwrap().is_dir())
+    .collect();
 
+    // Sort saves by last modified date (newest first)
+    save_dirs.sort_by_key(|entry| fs::metadata(entry.path()).unwrap().modified().unwrap());
+    save_dirs.reverse();
+
+    // Clear the terminal
+    print!("\x1B[2J\x1B[1;1H");
+    io::stdout().flush().unwrap();
+
+    // Display game version information
+    println!("rustpg version {} build {}\n",
+             option_env!("VERSION").unwrap_or("unknown version"),
+             option_env!("BUILD_NUMBER").unwrap_or("unknown build"));
+
+    // Display available saves or message if no saves found
     if save_dirs.is_empty() {
         println!("No saves found.");
+        println!("\n(b)ack, (q)uit");
+        print!("\nSelect a save to load: ");
+        io::stdout().flush().unwrap();
         return None;
     }
 
+    // Display sorted saves
     println!("Select a save to load:");
     for (i, entry) in save_dirs.iter().enumerate() {
         let save_name = entry.file_name().into_string().unwrap();
-        println!("{}. {}", i + 1, save_name);
+        let metadata = fs::metadata(entry.path()).unwrap();
+        let modified: DateTime<Local> = DateTime::from(metadata.modified().unwrap());
+
+        // Retrieve character level from save file (simplified for now)
+        let level = get_player_level(&entry.path()).unwrap_or(1);  // Fix applied here
+
+        println!("{}. {} | lvl {} | {}", i + 1, save_name, level, modified.format("%b, %d %Y"));
     }
-    println!("(b)ack\n(q)uit");
+
+    // Display menu options
+    println!("\n(dup)licate, (del)ete, (b)ack, (q)uit");
+    print!("\nSelect a save to load: ");
+    io::stdout().flush().unwrap();
 
     let mut choice = String::new();
     io::stdin().read_line(&mut choice).expect("Failed to read line");
     let choice = choice.trim();
 
+    // Handle quitting the game
     if choice == "q" {
+        std::process::exit(0);
+    } else if choice == "b" {
         return None;
     }
 
-    if choice == "b" {
-        return None;
+    // Handle deletion command
+    if let Some(name) = choice.strip_prefix("del ") {
+        let target_name = name.trim();
+        if let Some(target_save) = save_dirs.iter().find(|entry| {
+            entry.file_name().to_string_lossy().eq_ignore_ascii_case(target_name)
+        }) {
+            println!(
+                "Are you sure you want to delete the save for '{}'?\n(type 'yes' to confirm):",
+                target_name
+            );
+            let mut confirm = String::new();
+            io::stdin().read_line(&mut confirm).expect("Failed to read line");
+            if confirm.trim().eq_ignore_ascii_case("yes") {
+                if let Err(e) = fs::remove_dir_all(target_save.path()) {
+                    println!("Failed to delete save: {}", e);
+                } else {
+                    println!("Save for '{}' has been deleted successfully.", target_name);
+                }
+            } else {
+                println!("Delete action cancelled.");
+            }
+        } else {
+            println!("Save for '{}' not found.", target_name);
+        }
+        println!("Press Enter to continue...");
+        let _ = io::stdin().read_line(&mut String::new());
+        return load_save_menu(); // Reload the save menu after deletion attempt
     }
 
+    // Handle duplication command
+    if let Some(name) = choice.strip_prefix("dup ") {
+        let target_name = name.trim();
+        if let Some(old_save) = save_dirs.iter().find(|entry| {
+            entry.file_name().to_string_lossy().eq_ignore_ascii_case(target_name)
+        }) {
+            println!("Enter a name for the duplicated save:");
+            let mut new_name = String::new();
+            io::stdin().read_line(&mut new_name).expect("Failed to read line");
+            let new_name = sanitize_character_name(&new_name);
+
+            let new_path = saves_path.join(&new_name);
+            if new_path.exists() {
+                println!("A save with the name '{}' already exists. Please choose a different name.", new_name);
+            } else if let Err(e) = fs::create_dir_all(&new_path) {
+                println!("Failed to create duplicate save directory: {}", e);
+            } else if let Err(e) = copy_save_folder(old_save.path().as_path(), &new_path) {
+                println!("Failed to copy save directory: {}", e);
+            } else {
+                println!("Save for '{}' has been duplicated successfully to '{}'.", target_name, new_name);
+            }
+
+            println!("Press Enter to continue...");
+            let _ = io::stdin().read_line(&mut String::new());
+            return load_save_menu(); // Reload the save menu after duplication attempt
+        } else {
+            println!("Save for '{}' not found.", target_name);
+            println!("Press Enter to continue...");
+            let _ = io::stdin().read_line(&mut String::new());
+            return load_save_menu(); // Reload the save menu after failed duplication attempt
+        }
+    }
+
+    // Handle loading a save by index
     if let Ok(index) = choice.parse::<usize>() {
         if index > 0 && index <= save_dirs.len() {
             return Some(save_dirs[index - 1].path().to_str().unwrap().to_string());
         }
     }
 
-    None
+    // Handle invalid choice
+    println!("Invalid choice. Press Enter to continue...");
+    let _ = io::stdin().read_line(&mut String::new());
+    load_save_menu() // Reload the save menu after an invalid choice
 }
 
+
+
+fn get_player_level(save_path: &Path) -> Option<u32> {
+    // This function would load save data and return the player's level
+    // Placeholder for now - real implementation needed
+    Some(1) // Example: default level 1
+}
+
+fn copy_save_folder(from: &Path, to: &Path) -> io::Result<()> {
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let to_path = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            create_dir_all(&to_path)?;
+            copy_save_folder(&entry.path(), &to_path)?;
+        } else {
+            fs::copy(entry.path(), to_path)?;
+        }
+    }
+    Ok(())
+}
 
 fn load_game(save_folder: &str) {
     // Load character data
