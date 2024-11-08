@@ -157,9 +157,17 @@ pub fn handle_combat(player: &mut Player, mut enemy: Enemy, loot_tables: &HashMa
 }
 
 fn main_attack(player: &mut Player, enemy: &mut Enemy) {
-    let damage = 10; // Example main attack damage
+    let mut damage = 10; // Base damage for main attack
+
+    // Increase damage if a weapon is equipped
+    if let Some(weapon) = &player.equipped_weapon {
+        damage += weapon.attack_bonus.unwrap_or(0);
+        println!("\nYou attack with your {} for {} damage!", weapon.name, damage);
+    } else {
+        println!("\nYou attack with your fists for {} damage!", damage);
+    }
+
     enemy.take_damage(damage);
-    println!("\nYou hit the {} for {} damage!", enemy.name, damage);
 }
 
 fn spell_attack(player: &mut Player, enemy: &mut Enemy) {

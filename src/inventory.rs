@@ -128,18 +128,62 @@ pub fn display_inventory(player: &mut Player, filter: Option<ItemType>) {
 
 pub fn interact_with_item(player: &mut Player, item: &Item) {
     match item.item_type {
-        ItemType::Consumable => {
-            println!("You consume the {}.", item.name);
-            player.health = std::cmp::min(player.health + 10, player.max_health);
-            println!("You feel refreshed! Health: {}/{}", player.health, player.max_health);
-        }
-        ItemType::Combat => {
-            println!("The {} is equipped.", item.name);
-        }
-        _ => {
-            println!("The {} cannot be used directly.", item.name);
-        }
+        ItemType::Consumable => interact_with_consumable(player, item),
+        ItemType::Equipment => interact_with_equipment(player, item),
+        ItemType::CraftingMaterial => println!("The {} is used in crafting.", item.name),
+        _ => println!("The {} cannot be used directly.", item.name),
     }
     println!("Press Enter to continue...");
     let _ = io::stdin().read_line(&mut String::new());
 }
+
+
+fn interact_with_equipment(player: &mut Player, item: &Item) {
+    // Determine if item is a weapon or armor based on item properties
+    if item.name.contains("Sword") || item.name.contains("Dagger") {
+        // Handle equipping or unequipping weapon
+        if let Some(current_weapon) = &player.equipped_weapon {
+            if current_weapon.id == item.id {
+                println!("You unequip the {}.", item.name);
+                player.equipped_weapon = None;
+            } else {
+                println!("You unequip the {} and equip the {}.", current_weapon.name, item.name);
+                player.equipped_weapon = Some(item.clone());
+            }
+        } else {
+            println!("You equip the {}.", item.name);
+            player.equipped_weapon = Some(item.clone());
+        }
+    } else if item.name.contains("Armor") || item.name.contains("Shield") {
+        // Handle equipping or unequipping armor
+        if let Some(current_armor) = &player.equipped_armor {
+            if current_armor.id == item.id {
+                println!("You unequip the {}.", item.name);
+                player.equipped_armor = None;
+            } else {
+                println!("You unequip the {} and equip the {}.", current_armor.name, item.name);
+                player.equipped_armor = Some(item.clone());
+            }
+        } else {
+            println!("You equip the {}.", item.name);
+            player.equipped_armor = Some(item.clone());
+        }
+    } else {
+        println!("The {} cannot be equipped.", item.name);
+    }
+}
+
+pub fn interact_with_consumable(player: &mut Player, item: &Item) {
+    println!("You consume the {}.", item.name);
+    if let Some(quantity) = player.inventory.get_mut(&item.id) {
+        if *quantity > 0 {
+            *quantity -= 1;
+            // Apply item effect, for now just heal for a basic amount (e.g., 10 HP)
+            player.health = std::cmp::min(player.health + 10, player.max_health);
+            println!("You feel refreshed! Health: {}/{}", player.health, player.max_health);
+        } else {
+            println!("You don't have any {} left to use.", item.name);
+        }
+    }
+}
+

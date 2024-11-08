@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use crate::skill::{Skill, initialize_skills};
-use crate::items::create_items;
+use crate::items::{create_items, Item};
 use crate::items::{ItemType, get_starting_items};
 use crate::quest::Quest;
 
@@ -12,6 +12,8 @@ pub struct Player {
     pub level: i32,
     pub experience: i32,
     pub inventory: HashMap<u32, u32>,
+    pub equipped_weapon: Option<Item>,
+    pub equipped_armor: Option<Item>,
     pub skills: HashMap<String, Skill>,
     pub active_quest: Option<Quest>,
     pub in_combat: bool, // Field to track whether the player is in combat or not
@@ -50,6 +52,8 @@ impl Player {
             level: 1,
             experience: 0,
             inventory: HashMap::new(),
+            equipped_weapon: None,
+            equipped_armor: None,
             skills: initialize_skills(),
             active_quest: None,
             in_combat: false, // Initially not in combat

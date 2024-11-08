@@ -2,24 +2,36 @@ use std::collections::HashMap;
 use rand::Rng;
 use std::fmt;
 
-#[derive(Clone, Debug)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Item {
     pub id: u32,
     pub name: String,
     pub item_type: ItemType,
     pub weight: f32,
-    pub durability: Option<u32>, // Some items may have durability, others may not
-    pub effect: Option<Effect>,  // Some items may have effects (e.g., healing)
+    pub durability: Option<u32>,
+    pub effect: Option<Effect>,
+    pub attack_bonus: Option<i32>,
+    pub defense_bonus: Option<i32>,
 }
+
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum ItemType {
     Currency,
     Weapon,
     Armor,
+    CraftingMaterial,
+    Equipment,
+    QuestItem,
     Combat,
     Consumable,
     Misc,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Effect {
+    pub health_change: i32,
+    pub stamina_change: i32,
 }
 
 // Implement the Display trait for ItemType
@@ -29,171 +41,295 @@ impl fmt::Display for ItemType {
     }
 }
 
-// Effect that an item might have when used
-#[derive(Clone, Debug)]
-pub struct Effect {
-    pub health_change: i32,
-    pub stamina_change: i32,
-}
-
-impl Item {
-    // Create a new item with the given properties
-    pub fn new(
-        id: u32,
-        name: &str,
-        item_type: ItemType,
-        weight: f32,
-        durability: Option<u32>,
-        effect: Option<Effect>,
-    ) -> Self {
-        Item {
-            id,
-            name: name.to_string(),
-            item_type,
-            weight,
-            durability,
-            effect,
-        }
-    }
-
-    // Example function to use an item
-    pub fn use_item(&self) {
-        if let Some(effect) = &self.effect {
-            println!(
-                "{} used, Health Change: {}, Stamina Change: {}",
-                self.name, effect.health_change, effect.stamina_change
-            );
-            // Here we would modify the player's health or stamina accordingly
-        } else {
-            println!("{} cannot be used in this way.", self.name);
-        }
-    }
-}
-
-// Basic function to create items
+// Function to create predefined items
 pub fn create_items() -> HashMap<u32, Item> {
     let mut items = HashMap::new();
 
     // Currency
     items.insert(
         100001,
-        Item::new(100001, "Gold Coins", ItemType::Currency, 0.01, None, None),
+        Item {
+            id: 100001,
+            name: "Gold Coins".to_string(),
+            item_type: ItemType::Currency,
+            weight: 0.01,
+            durability: None,
+            effect: None,
+            attack_bonus: None,
+            defense_bonus: None,
+        },
     );
     items.insert(
         100002,
-        Item::new(100002, "Silver Coins", ItemType::Currency, 0.01, None, None),
+        Item {
+            id: 100002,
+            name: "Silver Coins".to_string(),
+            item_type: ItemType::Currency,
+            weight: 0.01,
+            durability: None,
+            effect: None,
+            attack_bonus: None,
+            defense_bonus: None,
+        },
     );
     items.insert(
         100003,
-        Item::new(100003, "Copper Coins", ItemType::Currency, 0.01, None, None),
+        Item {
+            id: 100003,
+            name: "Copper Coins".to_string(),
+            item_type: ItemType::Currency,
+            weight: 0.01,
+            durability: None,
+            effect: None,
+            attack_bonus: None,
+            defense_bonus: None,
+        },
     );
 
     // Weapons and Armor
     items.insert(
         100004,
-        Item::new(100004, "Bronze Dagger", ItemType::Weapon, 1.5, Some(100), None),
+        Item {
+            id: 100004,
+            name: "Bronze Dagger".to_string(),
+            item_type: ItemType::Weapon,
+            weight: 1.5,
+            durability: Some(100),
+            effect: None,
+            attack_bonus: Some(5),
+            defense_bonus: None,
+        },
     );
     items.insert(
         100008,
-        Item::new(100008, "Leather Gloves", ItemType::Armor, 0.5, Some(50), None),
+        Item {
+            id: 100008,
+            name: "Leather Gloves".to_string(),
+            item_type: ItemType::Armor,
+            weight: 0.5,
+            durability: Some(50),
+            effect: None,
+            attack_bonus: None,
+            defense_bonus: Some(2),
+        },
     );
     items.insert(
         100009,
-        Item::new(100009, "Leather Boots", ItemType::Armor, 0.7, Some(60), None),
+        Item {
+            id: 100009,
+            name: "Leather Boots".to_string(),
+            item_type: ItemType::Armor,
+            weight: 0.7,
+            durability: Some(60),
+            effect: None,
+            attack_bonus: None,
+            defense_bonus: Some(3),
+        },
+    );
+    items.insert(
+        100010,
+        Item {
+            id: 100010,
+            name: "Bronze Pickaxe".to_string(),
+            item_type: ItemType::Weapon,
+            weight: 2.0,
+            durability: Some(150),
+            effect: None,
+            attack_bonus: Some(7),
+            defense_bonus: None,
+        },
+    );
+    items.insert(
+        100011,
+        Item {
+            id: 100011,
+            name: "Bronze Hatchet".to_string(),
+            item_type: ItemType::Weapon,
+            weight: 2.2,
+            durability: Some(130),
+            effect: None,
+            attack_bonus: Some(6),
+            defense_bonus: None,
+        },
     );
 
     // Miscellaneous
     items.insert(
         100005,
-        Item::new(100005, "Leather Scrap", ItemType::Misc, 0.2, None, None),
+        Item {
+            id: 100005,
+            name: "Leather Scrap".to_string(),
+            item_type: ItemType::Misc,
+            weight: 0.2,
+            durability: None,
+            effect: None,
+            attack_bonus: None,
+            defense_bonus: None,
+        },
     );
     items.insert(
         100006,
-        Item::new(100006, "Empty Vial", ItemType::Misc, 0.1, None, None),
+        Item {
+            id: 100006,
+            name: "Empty Vial".to_string(),
+            item_type: ItemType::Misc,
+            weight: 0.1,
+            durability: None,
+            effect: None,
+            attack_bonus: None,
+            defense_bonus: None,
+        },
     );
     items.insert(
         100007,
-        Item::new(100007, "Small Bone", ItemType::Misc, 0.3, None, None),
+        Item {
+            id: 100007,
+            name: "Small Bone".to_string(),
+            item_type: ItemType::Misc,
+            weight: 0.3,
+            durability: None,
+            effect: None,
+            attack_bonus: None,
+            defense_bonus: None,
+        },
     );
     items.insert(
         100013,
-        Item::new(100013, "Fishing Rod", ItemType::Misc, 2.0, Some(200), None),
+        Item {
+            id: 100013,
+            name: "Fishing Rod".to_string(),
+            item_type: ItemType::Misc,
+            weight: 2.0,
+            durability: Some(200),
+            effect: None,
+            attack_bonus: None,
+            defense_bonus: None,
+        },
+    );
+    items.insert(
+        100020,
+        Item {
+            id: 100020,
+            name: "Flint 'n Steel".to_string(),
+            item_type: ItemType::Misc,
+            weight: 0.5,
+            durability: Some(75),
+            effect: None,
+            attack_bonus: None,
+            defense_bonus: None,
+        },
+    );
+    items.insert(
+        100021,
+        Item {
+            id: 100021,
+            name: "Fishing Bait".to_string(),
+            item_type: ItemType::Misc,
+            weight: 0.01,
+            durability: None,
+            effect: None,
+            attack_bonus: None,
+            defense_bonus: None,
+        },
+    );
+    items.insert(
+        100022,
+        Item {
+            id: 100022,
+            name: "Log".to_string(),
+            item_type: ItemType::Misc,
+            weight: 5.0,
+            durability: None,
+            effect: None,
+            attack_bonus: None,
+            defense_bonus: None,
+        },
     );
 
     // Consumables
     items.insert(
         100015,
-        Item::new(
-            100015,
-            "Raw Shrimp",
-            ItemType::Consumable,
-            0.3,
-            None,
-            Some(Effect {
+        Item {
+            id: 100015,
+            name: "Raw Shrimp".to_string(),
+            item_type: ItemType::Consumable,
+            weight: 0.3,
+            durability: None,
+            effect: Some(Effect {
                 health_change: 5,
                 stamina_change: 0,
             }),
-        ),
+            attack_bonus: None,
+            defense_bonus: None,
+        },
     );
     items.insert(
         100016,
-        Item::new(
-            100016,
-            "Cooked Shrimp",
-            ItemType::Consumable,
-            0.3,
-            None,
-            Some(Effect {
+        Item {
+            id: 100016,
+            name: "Cooked Shrimp".to_string(),
+            item_type: ItemType::Consumable,
+            weight: 0.3,
+            durability: None,
+            effect: Some(Effect {
                 health_change: 10,
                 stamina_change: 5,
             }),
-        ),
+            attack_bonus: None,
+            defense_bonus: None,
+        },
     );
 
     // Additional Consumables
     items.insert(
         100017,
-        Item::new(
-            100017,
-            "Raw Beef",
-            ItemType::Consumable,
-            0.5,
-            None,
-            Some(Effect {
+        Item {
+            id: 100017,
+            name: "Raw Beef".to_string(),
+            item_type: ItemType::Consumable,
+            weight: 0.5,
+            durability: None,
+            effect: Some(Effect {
                 health_change: 8,
                 stamina_change: 0,
             }),
-        ),
+            attack_bonus: None,
+            defense_bonus: None,
+        },
     );
     items.insert(
         100018,
-        Item::new(
-            100018,
-            "Cooked Beef",
-            ItemType::Consumable,
-            0.5,
-            None,
-            Some(Effect {
+        Item {
+            id: 100018,
+            name: "Cooked Beef".to_string(),
+            item_type: ItemType::Consumable,
+            weight: 0.5,
+            durability: None,
+            effect: Some(Effect {
                 health_change: 20,
                 stamina_change: 10,
             }),
-        ),
+            attack_bonus: None,
+            defense_bonus: None,
+        },
     );
 
     // Basic food items
     items.insert(
         100019,
-        Item::new(
-            100019,
-            "Cabbage",
-            ItemType::Consumable,
-            0.2,
-            None,
-            Some(Effect {
+        Item {
+            id: 100019,
+            name: "Cabbage".to_string(),
+            item_type: ItemType::Consumable,
+            weight: 0.2,
+            durability: None,
+            effect: Some(Effect {
                 health_change: 4,
                 stamina_change: 2,
             }),
-        ),
+            attack_bonus: None,
+            defense_bonus: None,
+        },
     );
 
     items

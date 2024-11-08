@@ -9,7 +9,7 @@ mod combat;
 mod inventory;
 
 use std::env;
-use player::Player;
+use crate::player::Player;
 use map::{Map, Direction};
 use crate::skill::Skill;
 use quest::{Quest, sample_quests};
