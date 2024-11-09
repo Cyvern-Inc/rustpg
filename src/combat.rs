@@ -1,14 +1,33 @@
-use crate::inventory::{display_inventory, interact_with_item};
-use crate::player::Player;
+// Core game components
 use crate::enemy::Enemy;
-use crate::items::{create_items, ItemType};
-use crate::items::{LootTable, calculate_loot};
-use std::collections::HashMap;
-use log::{debug, info};
-use std::io::{self, Write};
-use rand::Rng;
+use crate::player::Player;
 
-pub fn handle_combat(player: &mut Player, mut enemy: Enemy, loot_tables: &HashMap<String, LootTable>) -> String {
+// Inventory system
+use crate::inventory::{
+    display_and_handle_inventory,
+    handle_eat_command,
+};
+
+// Item system
+use crate::items::{
+    create_items,
+    Item,
+    ItemType,
+    calculate_loot,
+    LootTable,
+};
+
+// External crates
+use log::{debug, info};
+use rand::Rng;
+use std::collections::HashMap;
+use std::io::{self, Write};
+
+pub fn handle_combat(
+    player: &mut Player,
+    mut enemy: Enemy,
+    loot_tables: &HashMap<String, LootTable>,
+) -> String {
     info!("Entering combat with {}", enemy.name);
     let mut rng = rand::thread_rng();
     let mut charging = false;
@@ -65,7 +84,9 @@ pub fn handle_combat(player: &mut Player, mut enemy: Enemy, loot_tables: &HashMa
         } else {
             println!("Choose (m)ain, (c)harged, (s)pell, (i)tems, or (r)un?");
             let mut action = String::new();
-            io::stdin().read_line(&mut action).expect("Failed to read line");
+            io::stdin()
+                .read_line(&mut action)
+                .expect("Failed to read line");
             let action = action.trim();
 
             match action {
@@ -78,7 +99,7 @@ pub fn handle_combat(player: &mut Player, mut enemy: Enemy, loot_tables: &HashMa
                         "You hit the {} for {} damage!\nThe {} hits you for {} damage!",
                         enemy.name, 10, enemy.name, enemy.attack
                     );
-                },
+                }
                 "c" => {
                     charging = true;
                     charge_damage = 10 * 3;
@@ -97,7 +118,7 @@ pub fn handle_combat(player: &mut Player, mut enemy: Enemy, loot_tables: &HashMa
                     }
 
                     continue;
-                },
+                }
                 "s" => {
                     spell_attack(player, &mut enemy);
                     if enemy.is_defeated() {
@@ -107,15 +128,10 @@ pub fn handle_combat(player: &mut Player, mut enemy: Enemy, loot_tables: &HashMa
                         "You cast a spell on the {} for {} damage!\nThe {} hits you for {} damage!",
                         enemy.name, 15, enemy.name, enemy.attack
                     );
-                },
+                }
                 "i" => {
-                    // Use the new display_inventory function during combat
-                    // Only display consumables
-                    display_inventory(player, Some(ItemType::Consumable));
-
-                    // Refresh combat display after using an item
-                    // No additional manual prompts are needed
-                    continue; // Do not advance combat, re-render combat screen
+                    display_and_handle_inventory(player, Some(ItemType::Consumable));
+                    continue;
                 },
                 "r" => {
                     if rng.gen_bool(0.5) {
@@ -138,11 +154,19 @@ pub fn handle_combat(player: &mut Player, mut enemy: Enemy, loot_tables: &HashMa
 
                         continue;
                     }
-                },
+                }
                 _ => {
                     println!("\nInvalid command. Please enter 'm', 'c', 's', 'i', or 'r'.");
                     continue;
                 }
+            }
+
+            // After combat actions, award XP based on actions taken
+            match action {
+                "m" => player.train_skill("Attack", 10.0),
+                "c" => player.train_skill("Strength", 30.0),
+                "s" => player.train_skill("Magic", 30.0),
+                _ => {},
             }
 
             enemy.attack_player(&mut player.health);
@@ -162,7 +186,10 @@ fn main_attack(player: &mut Player, enemy: &mut Enemy) {
     // Increase damage if a weapon is equipped
     if let Some(weapon) = &player.equipped_weapon {
         damage += weapon.attack_bonus.unwrap_or(0);
-        println!("\nYou attack with your {} for {} damage!", weapon.name, damage);
+        println!(
+            "\nYou attack with your {} for {} damage!",
+            weapon.name, damage
+        );
     } else {
         println!("\nYou attack with your fists for {} damage!", damage);
     }
@@ -174,19 +201,33 @@ fn spell_attack(player: &mut Player, enemy: &mut Enemy) {
     if player.skills.get("Magic").is_some() {
         let damage = 15; // Example magic attack damage
         enemy.take_damage(damage);
-        println!("\nYou cast a spell on the {} for {} damage!", enemy.name, damage);
+        println!(
+            "\nYou cast a spell on the {} for {} damage!",
+            enemy.name, damage
+        );
     } else {
         println!("\nYou don't have enough magic ability to cast a spell!");
     }
 }
 
-fn charged_attack(_player: &mut Player, enemy: &mut Enemy, charge_damage: i32) { // Prefixed unused variable with underscore
+fn charged_attack(_player: &mut Player, enemy: &mut Enemy, charge_damage: i32) {
+    // Prefixed unused variable with underscore
     enemy.take_damage(charge_damage);
-    debug!("Player performed a charged attack for {} damage!", charge_damage);
-    println!("\nYou performed a charged attack for {} damage!", charge_damage);
+    debug!(
+        "Player performed a charged attack for {} damage!",
+        charge_damage
+    );
+    println!(
+        "\nYou performed a charged attack for {} damage!",
+        charge_damage
+    );
 }
 
-fn handle_enemy_defeat(player: &mut Player, enemy: &Enemy, loot_tables: &HashMap<String, LootTable>) -> String {
+fn handle_enemy_defeat(
+    player: &mut Player,
+    enemy: &Enemy,
+    loot_tables: &HashMap<String, LootTable>,
+) -> String {
     // Clear the terminal for better readability of combat results
     print!("\x1B[2J\x1B[1;1H");
     io::stdout().flush().unwrap();
@@ -225,7 +266,10 @@ fn handle_enemy_defeat(player: &mut Player, enemy: &Enemy, loot_tables: &HashMap
     println!("\nPress Enter to continue...");
     io::stdin().read_line(&mut String::new()).unwrap();
 
-    format!("Defeated a {} | +{} XP | Looted: {}", enemy.name, xp_gain, loot_message)
+    format!(
+        "Defeated a {} | +{} XP | Looted: {}",
+        enemy.name, xp_gain, loot_message
+    )
 }
 
 fn handle_player_defeat(player: &mut Player, enemy: &Enemy) -> String {
@@ -234,7 +278,11 @@ fn handle_player_defeat(player: &mut Player, enemy: &Enemy) -> String {
     "You were defeated...".to_string()
 }
 
-fn check_combat_end(player: &mut Player, enemy: &mut Enemy, loot_tables: &HashMap<String, LootTable>) -> Option<String> {
+fn check_combat_end(
+    player: &mut Player,
+    enemy: &mut Enemy,
+    loot_tables: &HashMap<String, LootTable>,
+) -> Option<String> {
     if enemy.is_defeated() {
         Some(handle_enemy_defeat(player, enemy, loot_tables))
     } else if player.health <= 0 {

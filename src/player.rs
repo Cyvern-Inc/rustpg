@@ -1,8 +1,9 @@
 use std::collections::HashMap;
 use crate::skill::{Skill, initialize_skills};
-use crate::items::{create_items, Item};
-use crate::items::{ItemType, get_starting_items};
+use crate::items::get_starting_items;
 use crate::quest::Quest;
+use crate::items::{Item, ItemType};
+use crate::items::create_items;
 
 #[derive(Debug)]
 pub struct Player {
@@ -11,6 +12,7 @@ pub struct Player {
     pub attack: i32,
     pub level: i32,
     pub experience: i32,
+    pub quests: Vec<Quest>,
     pub inventory: HashMap<u32, u32>,
     pub equipped_weapon: Option<Item>,
     pub equipped_armor: Option<Item>,
@@ -20,30 +22,6 @@ pub struct Player {
 }
 
 impl Player {
-    pub fn use_item_by_name(&mut self, item_name: &str) -> Option<()> {
-        let items = create_items(); // Get the complete item list
-
-        // Search for the item in the inventory by name
-        if let Some((item_id, quantity)) = self.inventory.iter_mut()
-            .find(|(item_id, &mut qty)| {
-                if qty > 0 {
-                    if let Some(item) = items.get(item_id) {
-                        return item.name.eq_ignore_ascii_case(item_name);
-                    }
-                }
-                false
-            })
-        {
-            // If the item is consumable and has quantity, use it
-            if *quantity > 0 {
-                *quantity -= 1;
-                println!("\nYou used {}!", item_name);
-                return Some(());
-            }
-        }
-
-        None // Return None if the item could not be used
-    }
     pub fn new() -> Self {
         let mut player = Player {
             health: 100,
@@ -51,6 +29,7 @@ impl Player {
             attack: 10,
             level: 1,
             experience: 0,
+            quests: vec![],
             inventory: HashMap::new(),
             equipped_weapon: None,
             equipped_armor: None,
@@ -60,6 +39,17 @@ impl Player {
         };
         player.add_starting_items();
         player
+    }
+
+    pub fn add_quest(&mut self, quest: Quest) {
+        self.quests.push(quest);
+    }
+
+    pub fn complete_quest(&mut self, quest_id: u32) {
+        if let Some(quest) = self.quests.iter_mut().find(|q| q.id == quest_id) {
+            quest.complete();
+            println!("Quest '{}' completed!", quest.name);
+        }
     }
 
     pub fn add_item_to_inventory(&mut self, item_id: u32, quantity: u32) {
@@ -96,18 +86,11 @@ impl Player {
         }
     }
 
-    fn level_up(&mut self) {
+    pub fn level_up(&mut self) {
         self.level += 1;
-        self.experience = 0;
-        self.attack += 5;
-        self.max_health += 20; // Increase max health on level up
         self.health = self.max_health; // Restore health to max on level up
         println!("Player leveled up to level {}!", self.level);
 
-        // Leveling up skills as well
-        for skill in self.skills.values_mut() {
-            skill.level_up();
-        }
     }
 
     pub fn display_status(&self) -> String {
@@ -140,37 +123,6 @@ impl Player {
         }
     }
 
-    // Consume an item from inventory
-    pub fn consume_item(&mut self, item_id: u32) {
-        if let Some(quantity) = self.inventory.get_mut(&item_id) {
-            if *quantity > 0 {
-                *quantity -= 1;
-                if *quantity == 0 {
-                    self.inventory.remove(&item_id);
-                }
-                // Apply item effects (example for health potion)
-                if let Some(item) = create_items().get(&item_id) {
-                    match item.item_type {
-                        ItemType::Consumable => {
-                            if item.name.to_lowercase().contains("potion") {
-                                self.health += 30; // Assume potion restores 30 health
-                                if self.health > self.max_health {
-                                    self.health = self.max_health; // Cap health at max health
-                                }
-                                println!("You used {} and restored health. Current health: {}/{}", item.name, self.health, self.max_health);
-                            }
-                        }
-                        _ => println!("Item used: {}", item.name),
-                    }
-                }
-            } else {
-                println!("You don't have any {} left.", create_items().get(&item_id).unwrap().name);
-            }
-        } else {
-            println!("Item not found in inventory.");
-        }
-    }
-
     // Method to display only consumable items
     pub fn display_consumables(&self) {
         println!("\n[Consumable Items]");
@@ -197,5 +149,22 @@ impl Player {
     // Method to handle player exiting combat
     pub fn exit_combat(&mut self) {
         self.in_combat = false;
+    }
+
+    pub fn remove_item(&mut self, item_id: u32, amount: u32) -> bool {
+        if let Some(quantity) = self.inventory.get_mut(&item_id) {
+            if *quantity >= amount {
+                *quantity -= amount;
+                if *quantity == 0 {
+                    self.inventory.remove(&item_id);
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn total_level(&self) -> i32 {
+        self.skills.values().map(|skill| skill.level.min(99)).sum()
     }
 }
