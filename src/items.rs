@@ -1,8 +1,9 @@
+use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use rand::Rng;
 use std::fmt;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Item {
     pub id: u32,
     pub name: String,
@@ -14,8 +15,7 @@ pub struct Item {
     pub defense_bonus: Option<i32>,
 }
 
-
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub enum ItemType {
     Currency,
     Weapon,
@@ -28,7 +28,7 @@ pub enum ItemType {
     Misc,
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Effect {
     pub health_change: i32,
     pub stamina_change: i32,

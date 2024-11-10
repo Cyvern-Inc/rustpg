@@ -1,6 +1,7 @@
+use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Skill {
     pub name: String,
     pub level: i32,
@@ -73,4 +74,35 @@ pub fn initialize_skills() -> HashMap<String, Skill> {
     skills.insert("Mining".to_string(), Skill::new("Mining", 1));
     skills.insert("Fishing".to_string(), Skill::new("Fishing", 1));
     skills
+}
+
+pub fn combat_xp_calculation(attack_counts: &HashMap<AttackType, usize>) -> HashMap<String, f32> {
+    let mut xp_gains = HashMap::new();
+
+    for (&attack_type, &count) in attack_counts {
+        match attack_type {
+            AttackType::Main => {
+                let xp = (count as f32) * 10.0; // Example: 10 XP per main attack
+                *xp_gains.entry("Attack".to_string()).or_insert(0.0) += xp;
+            }
+            AttackType::Charged => {
+                let xp = (count as f32) * 20.0; // Example: 20 XP per charged attack
+                *xp_gains.entry("Strength".to_string()).or_insert(0.0) += xp;
+            }
+            AttackType::Magic => {
+                let xp = (count as f32) * 15.0; // Example: 15 XP per magic attack
+                *xp_gains.entry("Magic".to_string()).or_insert(0.0) += xp;
+            }
+        }
+    }
+
+    xp_gains
+}
+
+// Define AttackType if not already defined
+#[derive(Debug, PartialEq, Eq, Hash, Clone, Copy)]
+pub enum AttackType {
+    Main,
+    Charged,
+    Magic,
 }

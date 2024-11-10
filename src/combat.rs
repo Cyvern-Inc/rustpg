@@ -1,5 +1,6 @@
 // Core game components
 use crate::enemy::Enemy;
+use crate::skill::{combat_xp_calculation, AttackType};
 use crate::player::Player;
 
 // Inventory system
@@ -34,6 +35,9 @@ pub fn handle_combat(
     let mut charge_damage = 0;
     let mut combat_action_message = String::new();
 
+    // Introduce attack_counts to keep track of attack types
+    let mut attack_counts: HashMap<AttackType, usize> = HashMap::new();
+
     loop {
         // Clear terminal for better user experience
         print!("\x1B[2J\x1B[1;1H");
@@ -65,8 +69,25 @@ pub fn handle_combat(
             charging = false;
             charge_damage = 0;
 
+            // Increment attack count for Charged attack
+            *attack_counts.entry(AttackType::Charged).or_insert(0) += 1;
+
             if enemy.is_defeated() {
                 info!("Enemy {} has been defeated", enemy.name);
+
+                // Calculate XP gains based on attack_counts
+                let xp_gains = combat_xp_calculation(&attack_counts);
+                // Add XP to relevant skills
+                for (skill_name, xp) in xp_gains {
+                    if let Some(skill) = player.skills.get_mut(&skill_name) {
+                        skill.add_experience(xp as f32);
+                        // Optionally, display XP gains to the player
+                        // println!("{} gained {} XP.", skill_name, xp);
+                    }
+                }
+                // Clear attack_counts after handling XP
+                attack_counts.clear();
+
                 return handle_enemy_defeat(player, &enemy, loot_tables);
             }
 
@@ -79,8 +100,11 @@ pub fn handle_combat(
 
             if player.health <= 0 {
                 info!("Player has been defeated by {}", enemy.name);
+                combat_action_message.push_str("\nNo experience is gained from defeat.");
                 return handle_player_defeat(player, &enemy);
             }
+
+            continue;
         } else {
             println!("Choose (m)ain, (c)harged, (s)pell, (i)tems, or (r)un?");
             let mut action = String::new();
@@ -92,7 +116,22 @@ pub fn handle_combat(
             match action {
                 "m" => {
                     main_attack(player, &mut enemy);
+
+                    // Increment attack count for Main attack
+                    *attack_counts.entry(AttackType::Main).or_insert(0) += 1;
+
                     if enemy.is_defeated() {
+                        // Calculate XP gains
+                        let xp_gains = combat_xp_calculation(&attack_counts);
+                        for (skill_name, xp) in xp_gains {
+                            if let Some(skill) = player.skills.get_mut(&skill_name) {
+                                skill.add_experience(xp as f32);
+                                // Optionally, display XP gains to the player
+                                // println!("{} gained {} XP.", skill_name, xp);
+                            }
+                        }
+                        attack_counts.clear();
+
                         return handle_enemy_defeat(player, &enemy, loot_tables);
                     }
                     combat_action_message = format!(
@@ -114,6 +153,7 @@ pub fn handle_combat(
 
                     if player.health <= 0 {
                         info!("Player has been defeated by {}", enemy.name);
+                        combat_action_message.push_str("\nNo experience is gained from defeat.");
                         return handle_player_defeat(player, &enemy);
                     }
 
@@ -121,7 +161,22 @@ pub fn handle_combat(
                 }
                 "s" => {
                     spell_attack(player, &mut enemy);
+
+                    // Increment attack count for Magic attack
+                    *attack_counts.entry(AttackType::Magic).or_insert(0) += 1;
+
                     if enemy.is_defeated() {
+                        // Calculate XP gains
+                        let xp_gains = combat_xp_calculation(&attack_counts);
+                        for (skill_name, xp) in xp_gains {
+                            if let Some(skill) = player.skills.get_mut(&skill_name) {
+                                skill.add_experience(xp as f32);
+                                // Optionally, display XP gains to the player
+                                // println!("{} gained {} XP.", skill_name, xp);
+                            }
+                        }
+                        attack_counts.clear();
+
                         return handle_enemy_defeat(player, &enemy, loot_tables);
                     }
                     combat_action_message = format!(
@@ -132,7 +187,7 @@ pub fn handle_combat(
                 "i" => {
                     display_and_handle_inventory(player, Some(ItemType::Consumable));
                     continue;
-                },
+                }
                 "r" => {
                     if rng.gen_bool(0.5) {
                         info!("Player successfully ran away from combat.");
@@ -149,6 +204,7 @@ pub fn handle_combat(
 
                         if player.health <= 0 {
                             info!("Player has been defeated by {}", enemy.name);
+                            combat_action_message.push_str("\nNo experience is gained from defeat.");
                             return handle_player_defeat(player, &enemy);
                         }
 
@@ -156,26 +212,22 @@ pub fn handle_combat(
                     }
                 }
                 _ => {
-                    println!("\nInvalid command. Please enter 'm', 'c', 's', 'i', or 'r'.");
+                    println!(
+                        "\nInvalid command. Please enter 'm', 'c', 's', 'i', or 'r'."
+                    );
                     continue;
                 }
             }
 
-            // After combat actions, award XP based on actions taken
-            match action {
-                "m" => player.train_skill("Attack", 10.0),
-                "c" => player.train_skill("Strength", 30.0),
-                "s" => player.train_skill("Magic", 30.0),
-                _ => {},
-            }
-
+            // Enemy attacks player after player's action
             enemy.attack_player(&mut player.health);
             debug!("{} hit player for {} damage", enemy.name, enemy.attack);
-        }
 
-        if player.health <= 0 {
-            info!("Player has been defeated by {}", enemy.name);
-            return handle_player_defeat(player, &enemy);
+            if player.health <= 0 {
+                info!("Player has been defeated by {}", enemy.name);
+                combat_action_message.push_str("\nNo experience is gained from defeat.");
+                return handle_player_defeat(player, &enemy);
+            }
         }
     }
 }

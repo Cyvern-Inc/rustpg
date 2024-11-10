@@ -1,6 +1,8 @@
 use std::fmt;
 use rand::Rng;
 use serde::{Serialize, Deserialize};
+use crate::player::Player;
+use term_size; // Ensure you have the term_size crate in your Cargo.toml
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
 pub enum Tile {
@@ -8,6 +10,7 @@ pub enum Tile {
     Player,
     Tree,
     Rock,
+    Campfire,
 }
 
 impl Tile {
@@ -17,6 +20,7 @@ impl Tile {
             Tile::Player => "P",
             Tile::Tree => "t",
             Tile::Rock => "r",
+            Tile::Campfire => "#",
         }
     }
 
@@ -26,6 +30,7 @@ impl Tile {
             Tile::Player => 'P',
             Tile::Tree => 't',
             Tile::Rock => 'r',
+            Tile::Campfire => '#',
         }
     }
 
@@ -35,12 +40,13 @@ impl Tile {
             'P' => Tile::Player,
             't' => Tile::Tree,
             'r' => Tile::Rock,
+            '#' => Tile::Campfire,
             _ => Tile::Empty, // Default to Empty for unknown chars
         }
     }
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
 pub enum Direction {
     Up,
     Down,
@@ -48,7 +54,7 @@ pub enum Direction {
     Right,
 }
 
-#[derive(Clone, Serialize, Deserialize, Debug)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Map {
     pub width: usize,
     pub height: usize,
@@ -56,6 +62,8 @@ pub struct Map {
     pub player_x: usize,
     pub player_y: usize,
     pub view_radius: usize,
+    pub campfire_x: usize,
+    pub campfire_y: usize,
 }
 
 impl Map {
@@ -81,6 +89,13 @@ impl Map {
         let chunk_center_y = chunk_size / 2;
         tiles[chunk_center_y][chunk_center_x] = Tile::Player;
 
+        // Place campfire south of player
+        let campfire_x = chunk_center_x;
+        let campfire_y = chunk_center_y + 1;
+        if campfire_y < height {
+            tiles[campfire_y][campfire_x] = Tile::Campfire;
+        }
+
         Self {
             width,
             height,
@@ -88,20 +103,26 @@ impl Map {
             player_x: chunk_center_x,
             player_y: chunk_center_y,
             view_radius: 15, // Default to 15 for a 30x30 view
+            campfire_x,
+            campfire_y,
         }
     }
 
     pub fn move_player(&mut self, direction: &Direction) {
         let (new_x, new_y) = match direction {
             Direction::Up => (self.player_x, self.player_y.saturating_sub(1)),
-            Direction::Down => (self.player_x, (self.player_y + 1).min(self.height - 1)),
+            Direction::Down => (
+                self.player_x,
+                usize::min(self.player_y + 1, self.height - 1),
+            ),
             Direction::Left => (self.player_x.saturating_sub(1), self.player_y),
-            Direction::Right => ((self.player_x + 1).min(self.width - 1), self.player_y),
+            Direction::Right => (
+                usize::min(self.player_x + 1, self.width - 1),
+                self.player_y,
+            ),
         };
 
-        // Check if the new position is a valid location (i.e., not an obstacle)
-        if self.tiles[new_y][new_x] == Tile::Empty {
-            // Update the player's position
+        if self.tiles[new_y][new_x] == Tile::Empty || self.tiles[new_y][new_x] == Tile::Campfire {
             self.tiles[self.player_y][self.player_x] = Tile::Empty;
             self.player_x = new_x;
             self.player_y = new_y;
@@ -111,25 +132,75 @@ impl Map {
 
     pub fn render(&self) -> String {
         let mut output = String::new();
-        let chunk_size = if self.view_radius == 15 { 30 } else if self.view_radius == 10 { 20 } else { 10 };
-        let chunk_x = (self.player_x / chunk_size) * chunk_size;
-        let chunk_y = (self.player_y / chunk_size) * chunk_size;
 
-        let start_x = chunk_x;
-        let start_y = chunk_y;
-        let end_x = (start_x + chunk_size).min(self.width);
-        let end_y = (start_y + chunk_size).min(self.height);
+        // Define the boundaries of the viewport
+        let half_radius = self.view_radius;
+        let start_x = if self.player_x > half_radius {
+            self.player_x - half_radius
+        } else {
+            0
+        };
+        let end_x = usize::min(self.player_x + half_radius, self.width - 1);
+        let start_y = if self.player_y > half_radius {
+            self.player_y - half_radius
+        } else {
+            0
+        };
+        let end_y = usize::min(self.player_y + half_radius, self.height - 1);
 
-        for y in start_y..end_y {
-            for x in start_x..end_x {
-                match self.tiles[y][x] {
-                    Tile::Player => output.push_str("\x1b[31mP\x1b[0m "), // Red player character 'P'
-                    _ => output.push_str(&format!("{} ", self.tiles[y][x].render())),
-                }
+        // Iterate through the viewport area
+        for y in start_y..=end_y {
+            for x in start_x..=end_x {
+                // Append the tile representation followed by a space for even spacing
+                output.push_str(self.tiles[y][x].render());
+                output.push(' ');
             }
             output.push('\n');
         }
+
         output
+    }
+
+    pub fn render_full(&self) -> String {
+        if let Some((term_width, term_height)) = term_size::dimensions() {
+            // Each tile is two characters wide (symbol + space)
+            let tile_width = 2;
+            let viewport_width = term_width / tile_width;
+            let viewport_height = term_height - 2; // Adjust for any UI elements
+
+            let half_viewport_width = viewport_width / 2;
+            let half_viewport_height = viewport_height / 2;
+
+            let start_x = if self.player_x >= half_viewport_width {
+                self.player_x - half_viewport_width
+            } else {
+                0
+            };
+
+            let end_x = usize::min(start_x + viewport_width - 1, self.width - 1);
+
+            let start_y = if self.player_y >= half_viewport_height {
+                self.player_y - half_viewport_height
+            } else {
+                0
+            };
+
+            let end_y = usize::min(start_y + viewport_height - 1, self.height - 1);
+
+            let mut output = String::new();
+
+            for y in start_y..=end_y {
+                for x in start_x..=end_x {
+                    output.push_str(self.tiles[y][x].render());
+                    output.push(' ');
+                }
+                output.push('\n');
+            }
+
+            output
+        } else {
+            self.render()
+        }
     }
 
     pub fn serialize_map(&self) -> String {
@@ -194,8 +265,49 @@ impl Map {
             player_x: 0, // Default value (set properly after loading if needed)
             player_y: 0, // Default value (set properly after loading if needed)
             view_radius: 15, // Default value
+            campfire_x: 0, // Default value (set properly after loading if needed)
+            campfire_y: 0, // Default value (set properly after loading if needed)
         }
     }
+
+    pub fn interact(&self, player: &Player) -> Option<String> {
+        let (x, y) = match player.facing {
+            Direction::Up => (self.player_x, self.player_y.saturating_sub(1)),
+            Direction::Down => (self.player_x, (self.player_y + 1).min(self.height - 1)),
+            Direction::Left => (self.player_x.saturating_sub(1), self.player_y),
+            Direction::Right => ((self.player_x + 1).min(self.width - 1), self.player_y),
+        };
+        
+        if self.tiles[y][x] == Tile::Campfire {
+            Some("Would you like to save the game? (y/n)".to_string())
+        } else {
+            None
+        }
+    }
+
+    pub fn set_tile(&mut self, x: usize, y: usize, tile: Tile) {
+        if x < self.width && y < self.height {
+            self.tiles[y][x] = tile;
+        }
+    }
+
+    pub fn is_adjacent_and_facing_campfire(&self, player: &Player) -> bool {
+        let (player_x, player_y) = (self.player_x, self.player_y);
+        let (adjacent_x, adjacent_y) = match player.facing {
+            Direction::Up => (self.player_x, self.player_y.saturating_sub(1)),
+            Direction::Down => (self.player_x, self.player_y + 1),
+            Direction::Left => (self.player_x.saturating_sub(1), self.player_y),
+            Direction::Right => (self.player_x + 1, self.player_y),
+        };
+
+        if adjacent_x < self.width && adjacent_y < self.height {
+            if self.tiles[adjacent_y][adjacent_x] == Tile::Campfire {
+                return true;
+            }
+        }
+        false
+    }
+    
 }
 
 impl fmt::Display for Tile {
@@ -205,6 +317,7 @@ impl fmt::Display for Tile {
             Tile::Player => 'P',
             Tile::Tree => 't',
             Tile::Rock => 'r',
+            Tile::Campfire => '#',
         };
         write!(f, "{}", symbol)
     }
