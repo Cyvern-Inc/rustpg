@@ -22,6 +22,8 @@ pub struct Player {
     pub active_quest: Option<Quest>,
     pub in_combat: bool,
     pub facing: Direction,
+    pub x: usize,
+    pub y: usize,
 }
 
 impl Player {
@@ -40,6 +42,8 @@ impl Player {
             active_quest: None,
             in_combat: false,
             facing: Direction::Down, // Initially facing south
+            x: 0, // Default position
+            y: 0,
         };
         player.add_starting_items();
         player
@@ -189,7 +193,7 @@ impl Player {
             map.player_y = 0; // Default to top row if campfire_y is 0
         }
 
-        // Optionally, ensure the new position is valid
+        // Ensure the new position is valid
         if map.player_y >= map.height {
             map.player_y = map.height - 1;
         }
@@ -202,5 +206,11 @@ impl Player {
         } else {
             println!("Skill not found: {}", skill_name);
         }
+    }
+
+    // Method to set position
+    pub fn set_position(&mut self, x: usize, y: usize) {
+        self.x = x;
+        self.y = y;
     }
 }

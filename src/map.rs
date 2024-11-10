@@ -205,21 +205,12 @@ impl Map {
 
     pub fn serialize_map(&self) -> String {
         let mut serialized = String::new();
-
-        for row in &self.tiles {
-            let mut current_char = row[0].to_char();
-            let mut count = 0;
-
-            for &tile in row {
-                if tile.to_char() == current_char {
-                    count += 1;
-                } else {
-                    serialized.push_str(&format!("{}{}", current_char, count));
-                    current_char = tile.to_char();
-                    count = 1;
-                }
+        for (y, row) in self.tiles.iter().enumerate() {
+            for (x, tile) in row.iter().enumerate() {
+                let tile_char = tile.to_char();
+                serialized.push(tile_char);
+                log::debug!("Serializing Tile at ({}, {}): {}", x, y, tile_char);
             }
-            serialized.push_str(&format!("{}{}", current_char, count));
             serialized.push('\n');
         }
         serialized
@@ -227,46 +218,52 @@ impl Map {
 
     pub fn deserialize_map(width: usize, height: usize, data: &str) -> Self {
         let mut tiles = vec![vec![Tile::Empty; width]; height];
-        let mut y = 0;
-
-        for line in data.lines() {
-            let mut x = 0;
-            let mut chars = line.chars().peekable();
-
-            while let Some(c) = chars.next() {
-                if let Some(digit_char) = chars.peek() {
-                    if digit_char.is_numeric() {
-                        let mut count_str = String::new();
-                        while let Some(digit) = chars.peek() {
-                            if digit.is_numeric() {
-                                count_str.push(*digit);
-                                chars.next();
-                            } else {
-                                break;
-                            }
-                        }
-                        let count: usize = count_str.parse().unwrap_or(1);
-                        for _ in 0..count {
-                            if x < width && y < height {
-                                tiles[y][x] = Tile::from_char(c);
-                                x += 1;
-                            }
-                        }
-                    }
+        // Parse 'data' to populate 'tiles'
+        // Example parsing logic (adjust as needed)
+        for (y, line) in data.lines().enumerate() {
+            for (x, ch) in line.chars().enumerate() {
+                if y < height && x < width {
+                    tiles[y][x] = match ch {
+                        'p' => Tile::Player,
+                        '#' => Tile::Campfire,
+                        't' => Tile::Tree,
+                        'r' => Tile::Rock,
+                        _ => Tile::Empty,
+                    };
                 }
             }
-            y += 1;
+        }
+        // Extract player and campfire positions
+        let mut player_x = 0;
+        let mut player_y = 0;
+        let mut campfire_x = 0;
+        let mut campfire_y = 0;
+        
+        for y in 0..height {
+            for x in 0..width {
+                match tiles[y][x] {
+                    Tile::Player => {
+                        player_x = x;
+                        player_y = y;
+                    }
+                    Tile::Campfire => {
+                        campfire_x = x;
+                        campfire_y = y;
+                    }
+                    _ => {}
+                }
+            }
         }
 
         Self {
             width,
             height,
             tiles,
-            player_x: 0, // Default value (set properly after loading if needed)
-            player_y: 0, // Default value (set properly after loading if needed)
-            view_radius: 15, // Default value
-            campfire_x: 0, // Default value (set properly after loading if needed)
-            campfire_y: 0, // Default value (set properly after loading if needed)
+            player_x,
+            player_y,
+            campfire_x,
+            campfire_y,
+            view_radius: 15, // Example value
         }
     }
 
@@ -286,7 +283,7 @@ impl Map {
     }
 
     pub fn set_tile(&mut self, x: usize, y: usize, tile: Tile) {
-        if x < self.width && y < self.height {
+        if y < self.height && x < self.width {
             self.tiles[y][x] = tile;
         }
     }
@@ -308,6 +305,16 @@ impl Map {
         false
     }
     
+    /// Clears all player positions from the map.
+    pub fn clear_player_positions(&mut self) {
+        for row in &mut self.tiles {
+            for tile in row.iter_mut() {
+                if *tile == Tile::Player {
+                    *tile = Tile::Empty; // Or whatever represents an empty tile
+                }
+            }
+        }
+    }
 }
 
 impl fmt::Display for Tile {

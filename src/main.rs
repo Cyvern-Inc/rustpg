@@ -10,13 +10,12 @@ mod utils;
 
 use crate::combat::handle_combat;
 use crate::inventory::{display_and_handle_inventory, display_inventory, handle_eat_command};
-use crate::items::{create_items, create_loot_tables, get_starting_items};
+use crate::items::{create_items, create_loot_tables, get_starting_items, ItemType};
 use crate::map::Tile;
 use crate::player::Player;
 use crate::quest::{sample_quests, starting_quest, Quest};
 use crate::skill::Skill;
-use crate::utils::should_encounter_enemy;
-use chrono::{DateTime, Local};
+use crate::utils::{should_encounter_enemy, faf};
 use enemy::basic_enemies;
 use map::{Direction, Map};
 use rand::Rng;
@@ -32,7 +31,7 @@ use std::io::{self, Write};
 use std::panic;
 use std::path::{Path, PathBuf};
 use term_size;
-use utils::faf;
+use chrono::{DateTime, Local};
 
 #[derive(Serialize, Deserialize, Clone)]
 struct CharacterSave {
@@ -356,22 +355,38 @@ fn copy_save_folder(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 fn load_game(save_folder: &Path) {
+    // Deserialize the saved character data
     let character_file_path = save_folder.join("character.json");
     let character_data: CharacterSave = serde_json::from_str(
         &fs::read_to_string(&character_file_path).expect("Failed to read character file"),
     )
     .expect("Failed to parse character file");
+
+    // Deserialize the map data
     let map_file_path = save_folder.join("map.txt");
     let map_data_str = fs::read_to_string(&map_file_path).expect("Failed to read map file");
-    let map_data = Map::deserialize_map(300, 300, &map_data_str);
+    let mut map_data = Map::deserialize_map(300, 300, &map_data_str);
+
+    // Initialize the player and set their position
     let mut player = Player::new();
+    player.set_position(character_data.player_x, character_data.player_y);
+
+    // Clear existing player positions to avoid duplicates
+    map_data.clear_player_positions();
+
+    // Set the player's current position on the map
+    map_data.set_tile(character_data.player_x, character_data.player_y, Tile::Player);
+
+    // Load quests and other data as needed
     let quests = sample_quests();
+
+    // Start the game loop with the updated player and map
     game_loop(
         player,
         map_data,
         quests,
         save_folder.to_path_buf(),
-        character_data.name,
+        character_data.character_name,
     );
 }
 
@@ -437,13 +452,13 @@ fn game_loop(
         print!("\x1B[2J\x1B[1;1H");
         io::stdout().flush().unwrap();
 
-        // Render the viewport
-        println!("{}", game_map.render());
-
         // Render the top menu
         println!("(w/a/s/d) move | (status) player status | (quests) view quests");
         println!("(i) inventory | (m) menu | (q) quit");
         println!();
+        
+        // Render the viewport
+        println!("{}", game_map.render());
 
         // Display recent actions if not in combat
         if (!player.in_combat) {
@@ -519,9 +534,8 @@ fn game_loop(
                 new_action = "Viewed player status.".to_string();
             }
             "i" => {
-                player.display_inventory();
-                println!("\nPress Enter to continue...");
-                let _ = io::stdin().read_line(&mut String::new());
+                display_and_handle_inventory(&mut player, None);
+                continue;
                 new_action = "Viewed inventory.".to_string();
             }
             "m" => {

@@ -185,7 +185,7 @@ pub fn handle_combat(
                     );
                 }
                 "i" => {
-                    display_and_handle_inventory(player, Some(ItemType::Consumable));
+                    display_and_handle_inventory(player, None);
                     continue;
                 }
                 "r" => {
