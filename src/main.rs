@@ -453,9 +453,9 @@ fn game_loop(
 
     // Determine view size based on terminal height
     let view_size = if let Some((_, height)) = term_size::dimensions() {
-        if height >= 44 {
+        if (height >= 44) {
             30
-        } else if height >= 29 {
+        } else if (height >= 29) {
             20
         } else {
             10
@@ -470,35 +470,70 @@ fn game_loop(
         print!("\x1B[2J\x1B[1;1H");
         io::stdout().flush().unwrap();
 
-        // Render the top menu
-        println!("(w/a/s/d) move | (status) player status | (quests) view quests");
-        println!("(i) inventory | (m) menu | (q) quit");
-        println!();
+        // Define a separator between map and info
+        const SEPARATOR: &str = "    "; // 4 spaces
 
         // Render the viewport
-        println!("{}", game_map.render());
+        let map_str = game_map.render();
+        let map_lines: Vec<&str> = map_str.lines().collect();
+        let map_height = map_lines.len();
 
-        // Display recent actions if not in combat
+        // Prepare menu lines
+        let mut menu_lines = Vec::new();
+        menu_lines.push("(w/a/s/d) move | (status) player status | (quests) view quests");
+        menu_lines.push("(i) inventory | (m) menu | (q) quit");
+
+        // Prepare recent actions lines
+        let mut info_lines = Vec::new();
+
+        // If not in combat, add recent actions
         if !player.in_combat {
-            println!("\nRecent Actions:");
+            info_lines.push("Recent Actions:");
 
-            // Get the last three actions
-            let actions_to_display: Vec<&String> = recent_actions
-                .iter()
-                .rev()
-                .take(3)
-                .collect();
+            // Calculate the maximum number of recent actions based on map height
+            let max_recent_actions = if map_height > 1 { map_height - 1 } else { 0 };
 
-            // Print in the original order
+            // Get the last `max_recent_actions` actions
+            let actions_to_display: Vec<&String> = recent_actions.iter().rev().take(max_recent_actions).collect();
+
+            // Add recent actions in original order
             for action in actions_to_display.iter().rev() {
-                println!("{}", action);
+                info_lines.push(action);
             }
 
-            // Pad with "----------" to ensure exactly 3 lines
-            for _ in actions_to_display.len()..3 {
-                println!("----------");
+            // Pad with "----------" to ensure exactly `max_recent_actions` lines
+            for _ in actions_to_display.len()..max_recent_actions {
+                info_lines.push("----------");
             }
+        }
 
+        // Determine the maximum number of lines between map and info
+        let max_lines = map_lines.len().max(info_lines.len());
+
+        // Calculate the width of the map for alignment
+        let map_width = map_lines.iter().map(|line| line.len()).max().unwrap_or(0);
+
+        // Print the menu at the top
+        for menu_line in &menu_lines {
+            println!("{}", menu_line);
+        }
+        println!(); // Blank line for spacing
+
+        // Iterate through each line index and print map and recent actions side by side
+        for i in 0..max_lines {
+            let map_line = map_lines.get(i).unwrap_or(&"");
+            let info_line = info_lines.get(i).unwrap_or(&"");
+            println!(
+                "{:<width$}{}{}",
+                map_line,
+                SEPARATOR,
+                info_line,
+                width = map_width
+            );
+        }
+
+        // Print the prompt below the map and recent actions
+        if !player.in_combat {
             println!("\nWhat would you like to do?...");
         }
 
