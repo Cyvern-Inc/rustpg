@@ -9,12 +9,11 @@ mod skill;
 mod utils;
 
 use crate::combat::handle_combat;
-use crate::inventory::{display_and_handle_inventory, display_inventory, handle_eat_command};
-use crate::items::{create_items, create_loot_tables, get_starting_items, ItemType};
+use crate::inventory::display_and_handle_inventory;
+use crate::items::create_loot_tables;
 use crate::map::Tile;
 use crate::player::Player;
 use crate::quest::{sample_quests, starting_quest, Quest};
-use crate::skill::Skill;
 use crate::utils::{should_encounter_enemy, faf};
 use enemy::basic_enemies;
 use map::{Direction, Map};
@@ -23,12 +22,9 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use skill::initialize_skills;
-use std::collections::HashMap;
 use std::collections::VecDeque;
-use std::env;
-use std::fs::{self, copy, create_dir_all, remove_dir_all};
+use std::fs::{self, create_dir_all};
 use std::io::{self, Write};
-use std::panic;
 use std::path::{Path, PathBuf};
 use term_size;
 use chrono::{DateTime, Local};
@@ -58,7 +54,7 @@ fn main() {
     let version = option_env!("VERSION").unwrap_or("unknown version");
     let build_number = option_env!("BUILD_NUMBER").unwrap_or("unknown build");
     let saves_path = Path::new("Saves");
-    if (!saves_path.exists()) {
+    if !saves_path.exists() {
         fs::create_dir(saves_path).expect("Failed to create Saves folder");
     }
 
@@ -448,9 +444,9 @@ fn game_loop(
 
     // Determine view size based on terminal height
     let view_size = if let Some((_, height)) = term_size::dimensions() {
-        if (height >= 44) {
+        if height >= 44 {
             30
-        } else if (height >= 29) {
+        } else if height >= 29 {
             20
         } else {
             10
@@ -474,7 +470,7 @@ fn game_loop(
         println!("{}", game_map.render());
 
         // Display recent actions if not in combat
-        if (!player.in_combat) {
+        if !player.in_combat {
             println!("\nRecent Actions:");
             for action in &recent_actions {
                 println!("{}", action);
@@ -529,7 +525,7 @@ fn game_loop(
                 break; // Exit game
             }
             "w" | "s" | "a" | "d" => {
-                if (!player.in_combat) {
+                if !player.in_combat {
                     let direction = match input {
                         "w" => Direction::Up,
                         "s" => Direction::Down,
@@ -556,7 +552,7 @@ fn game_loop(
                         player.in_combat = false; // Set in_combat to false after combat ends
 
                         // After combat ends, check if player is dead
-                        if (player.health <= 0) {
+                        if player.health <= 0 {
                             println!("You have been defeated!");
                             println!("Press Enter to respawn...");
                             let _ = io::stdin().read_line(&mut String::new());
@@ -593,15 +589,15 @@ fn game_loop(
         }
 
         // Add the new action to the recent actions queue if not in combat
-        if (!player.in_combat) {
-            if (recent_actions.len() == 3) {
+        if !player.in_combat {
+            if recent_actions.len() == 3 {
                 recent_actions.pop_front(); // Remove the oldest action if at capacity
             }
             recent_actions.push_back(new_action.clone()); // Clone new_action here to keep the original value intact
         }
 
         // Check if player is dead and respawn if necessary
-        if (player.health <= 0 && !player.in_combat) {
+        if player.health <= 0 && !player.in_combat {
             // This block can be removed since respawn is handled after combat ends
             // Keeping it here as a fallback
             player.respawn(&mut game_map);

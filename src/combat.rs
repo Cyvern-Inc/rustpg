@@ -4,16 +4,11 @@ use crate::skill::{combat_xp_calculation, AttackType};
 use crate::player::Player;
 
 // Inventory system
-use crate::inventory::{
-    display_and_handle_inventory,
-    handle_eat_command,
-};
+use crate::inventory::display_and_handle_inventory;
 
 // Item system
 use crate::items::{
     create_items,
-    Item,
-    ItemType,
     calculate_loot,
     LootTable,
 };
