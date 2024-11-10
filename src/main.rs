@@ -14,7 +14,8 @@ use crate::items::create_loot_tables;
 use crate::map::Tile;
 use crate::player::Player;
 use crate::quest::{sample_quests, starting_quest, Quest};
-use crate::utils::{should_encounter_enemy, faf};
+use crate::utils::{faf, should_encounter_enemy};
+use chrono::{DateTime, Local};
 use enemy::basic_enemies;
 use map::{Direction, Map};
 use rand::Rng;
@@ -27,7 +28,6 @@ use std::fs::{self, create_dir_all};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
 use term_size;
-use chrono::{DateTime, Local};
 
 #[derive(Serialize, Deserialize, Clone)]
 struct CharacterSave {
@@ -46,9 +46,9 @@ struct CharacterSave {
     inventory: std::collections::HashMap<u32, u32>,
 }
 
-// =========================
-// Game Initialization
-// =========================
+// ====================//
+// Game Initialization //
+// ====================//
 
 fn main() {
     let version = option_env!("VERSION").unwrap_or("unknown version");
@@ -124,7 +124,12 @@ fn new_game() {
         } else if character_name == "b" {
             break;
         }
-        if character_name.is_empty() || character_name.len() > 32 || !character_name.chars().all(|c| c.is_alphanumeric() || c.is_whitespace()) {
+        if character_name.is_empty()
+            || character_name.len() > 32
+            || !character_name
+                .chars()
+                .all(|c| c.is_alphanumeric() || c.is_whitespace())
+        {
             println!("Invalid name. Please enter a valid name.");
             println!("\nPress Enter to continue...");
             let _ = io::stdin().read_line(&mut String::new());
@@ -357,38 +362,42 @@ fn load_game(save_folder: &Path) {
         &fs::read_to_string(&character_file_path).expect("Failed to read character file"),
     )
     .expect("Failed to parse character file");
-    
+
     // Deserialize the map data with player coordinates
     let map_file_path = save_folder.join("map.txt");
     let map_data_str = fs::read_to_string(&map_file_path).expect("Failed to read map file");
-    
+
     // Ensure that `player_x` and `player_y` are correctly retrieved from `character_data`
     let mut map_data = Map::deserialize_map(
-        character_data.game_map.width, 
-        character_data.game_map.height, 
-        &map_data_str, 
-        character_data.player_x, 
-        character_data.player_y
+        character_data.game_map.width,
+        character_data.game_map.height,
+        &map_data_str,
+        character_data.player_x,
+        character_data.player_y,
     );
-    
+
     // Initialize the player and set their position
     let mut player = Player::new();
     player.set_position(character_data.player_x, character_data.player_y);
-    
+
     // Clear any existing player positions to avoid duplicates
     map_data.clear_player_positions();
-    
+
     // Set the player's position on the map
-    map_data.set_tile(character_data.player_x, character_data.player_y, Tile::Player);
+    map_data.set_tile(
+        character_data.player_x,
+        character_data.player_y,
+        Tile::Player,
+    );
 
     println!(
         "Loaded Player Position: ({}, {})",
         character_data.player_x, character_data.player_y
     );
-    
+
     // Load quests and other data as needed
     let quests = sample_quests();
-    
+
     // Start the game loop with the updated player and map
     game_loop(
         player,
@@ -465,20 +474,31 @@ fn game_loop(
         println!("(w/a/s/d) move | (status) player status | (quests) view quests");
         println!("(i) inventory | (m) menu | (q) quit");
         println!();
-        
+
         // Render the viewport
         println!("{}", game_map.render());
 
         // Display recent actions if not in combat
         if !player.in_combat {
             println!("\nRecent Actions:");
-            for action in &recent_actions {
+
+            // Get the last three actions
+            let actions_to_display: Vec<&String> = recent_actions
+                .iter()
+                .rev()
+                .take(3)
+                .collect();
+
+            // Print in the original order
+            for action in actions_to_display.iter().rev() {
                 println!("{}", action);
             }
-            // Ensure exactly 3 lines are always displayed for recent actions
-            for _ in recent_actions.len()..3 {
+
+            // Pad with "----------" to ensure exactly 3 lines
+            for _ in actions_to_display.len()..3 {
                 println!("----------");
             }
+
             println!("\nWhat would you like to do?...");
         }
 
@@ -525,7 +545,7 @@ fn game_loop(
                 break; // Exit game
             }
             "w" | "s" | "a" | "d" => {
-                if !player.in_combat {
+                if (!player.in_combat) {
                     let direction = match input {
                         "w" => Direction::Up,
                         "s" => Direction::Down,
@@ -538,7 +558,8 @@ fn game_loop(
                     new_action = format!("Player moved {:?}", direction);
 
                     // Random enemy encounter logic
-                    if should_encounter_enemy(1) { // 1% chance
+                    if should_encounter_enemy(1) {
+                        // 1% chance
                         // Enemy encounter logic
                         let mut rng = rand::thread_rng();
                         let enemies = basic_enemies();
@@ -570,8 +591,8 @@ fn game_loop(
             }
             "i" => {
                 display_and_handle_inventory(&mut player, None);
-                continue;
                 new_action = "Viewed inventory.".to_string();
+                continue;
             }
             "m" => {
                 // Handle menu
