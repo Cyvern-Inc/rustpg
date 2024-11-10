@@ -1,14 +1,29 @@
-// Removed the unused random_range function from utils.rs.
-
-use crate::map::{Direction, Map};
-use crate::player::Player;
-use log::{debug, info};
+// Import necessary modules and types
 use rand::Rng;
-use std::io::{self, Read, Write};
+use std::io::{self, Write};
 use std::thread;
 use std::time::Duration;
+use crossterm::event::{self, Event, KeyCode, KeyEvent};
 
-pub fn faf(player: &mut Player, game_map: &mut Map) {
+// Ensure you have access to these structs and enums
+use crate::map::{Map, Direction};
+use crate::player::Player;
+
+pub struct MovementWeights {
+    pub same_direction: u32,
+    pub away_from_campfire: u32,
+    pub towards_campfire: u32,
+    pub towards_tree: u32,
+    pub towards_rock: u32,
+    pub away_from_tree: u32,
+    pub away_from_rock: u32,
+    pub up: u32,
+    pub down: u32,
+    pub left: u32,
+    pub right: u32,
+}
+
+pub fn faf(player: &mut Player, game_map: &mut Map) -> bool {
     // Initialize weights (adjust as needed)
     let weights = MovementWeights {
         same_direction: 128,
@@ -18,6 +33,8 @@ pub fn faf(player: &mut Player, game_map: &mut Map) {
         right: 64,
         towards_tree: 0,
         towards_rock: 0,
+        away_from_tree: 0,
+        away_from_rock: 0,
         towards_campfire: 0,
         away_from_campfire: 0,
     };
@@ -25,6 +42,13 @@ pub fn faf(player: &mut Player, game_map: &mut Map) {
     let mut rng = rand::thread_rng();
 
     loop {
+        // Clear the terminal
+        print!("\x1B[2J\x1B[1;1H");
+        io::stdout().flush().unwrap();
+        
+        // Render the viewport
+        println!("{}", game_map.render_full());
+
         // Non-blocking input to check for 'p', 'b', or 'q'
         if let Some(input) = check_for_input() {
             match input.as_str() {
@@ -39,54 +63,52 @@ pub fn faf(player: &mut Player, game_map: &mut Map) {
             }
         }
 
-        // Adjust view radius based on terminal size
-        if let Some((width, height)) = term_size::dimensions() {
-            game_map.view_radius = std::cmp::min(width, height) / 2;
-        }
+        // Calculate the next direction using movement weights
+        let direction = weighted_random_direction(&mut rng, &weights, prev_direction, game_map);
 
-        // Clear the terminal
-        print!("\x1B[2J\x1B[1;1H");
-        io::stdout().flush().unwrap();
-
-        // Render the viewport centered on the player
-        println!("{}", game_map.render_full());
-
-        // Move player in weighted random direction
-        let direction = get_weighted_random_direction(&weights, prev_direction, player, game_map);
+        // Move the player
         game_map.move_player(&direction);
         prev_direction = direction;
 
         // Check for enemy encounter
-        if should_encounter_enemy(20) {
-            // Exit faf mode to start combat
-            break;
+        if should_encounter_enemy(1) { // Adjust the encounter rate as needed
+            println!("Enemy encountered! Stopping automatic movement.");
+            player.in_combat = true;
+            return true; // Indicate that combat should be initiated
         }
 
-        // Wait for 0.2 seconds
-        thread::sleep(Duration::from_millis(200));
+        // Delay to simulate time between movements
+        thread::sleep(Duration::from_millis(500));
+
+        // Optionally, update the view or display the map here
     }
+
+    false // No enemy encountered
 }
 
-// Helper struct for movement weights
-struct MovementWeights {
-    same_direction: u8,
-    up: u8,
-    down: u8,
-    left: u8,
-    right: u8,
-    towards_tree: u8,
-    towards_rock: u8,
-    towards_campfire: u8,
-    away_from_campfire: u8,
+pub fn check_for_input() -> Option<String> {
+    if event::poll(Duration::from_secs(0)).unwrap() {
+        if let Event::Key(KeyEvent { code, modifiers, .. }) = event::read().unwrap() {
+            if modifiers.is_empty() {
+                match code {
+                    KeyCode::Char('p') => return Some("p".to_string()),
+                    KeyCode::Char('b') => return Some("b".to_string()),
+                    KeyCode::Char('q') => return Some("q".to_string()),
+                    _ => {}
+                }
+            }
+        }
+    }
+    None
 }
 
-// Function to get weighted random direction
-fn get_weighted_random_direction(
+pub fn weighted_random_direction(
+    rng: &mut impl Rng,
     weights: &MovementWeights,
     prev_direction: Direction,
-    player: &Player,
     game_map: &Map,
 ) -> Direction {
+    // Collect all possible directions with their associated weights
     let mut directions = vec![
         (Direction::Up, weights.up),
         (Direction::Down, weights.down),
@@ -94,41 +116,33 @@ fn get_weighted_random_direction(
         (Direction::Right, weights.right),
     ];
 
-    // Add weight for same direction
-    directions.iter_mut().for_each(|(dir, weight)| {
+    // Increase weight for the same direction
+    for (dir, weight) in &mut directions {
         if *dir == prev_direction {
             *weight += weights.same_direction;
         }
-    });
-
-    // Calculate total weight
-    let total_weight: u16 = directions.iter().map(|&(_, w)| w as u16).sum();
-
-    // Choose random direction based on weights
-    let mut rng = rand::thread_rng();
-    let mut choice = rng.gen_range(0..total_weight);
-    for (dir, weight) in directions {
-        if choice < weight as u16 {
-            return dir;
-        }
-        choice -= weight as u16;
     }
 
-    // Default to up if something goes wrong
-    Direction::Up
-}
+    // Calculate the total weight
+    let total_weight: u32 = directions.iter().map(|(_, weight)| *weight).sum();
 
-// Implement a function to handle non-blocking input
-fn check_for_input() -> Option<String> {
-    // Use a crate like `crossterm` or `termion` to handle non-blocking input
-    None // Placeholder implementation
+    // Generate a random number within the total weight
+    let mut choice = rng.gen_range(0..total_weight);
+
+    // Select the direction based on weighted probability
+    for (dir, weight) in directions {
+        if choice < weight {
+            return dir;
+        }
+        choice -= weight;
+    }
+
+    // Default to previous direction if something goes wrong
+    prev_direction
 }
 
 pub fn should_encounter_enemy(chance: u8) -> bool {
     let mut rng = rand::thread_rng();
     let encounter = rng.gen_range(0..100) < chance;
-    if encounter {
-        debug!("Enemy encounter triggered with chance: {}", chance);
-    }
     encounter
 }

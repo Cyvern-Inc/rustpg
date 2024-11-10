@@ -69,7 +69,6 @@ pub struct Map {
 impl Map {
     pub fn new(width: usize, height: usize) -> Self {
         let mut tiles = vec![vec![Tile::Empty; width]; height];
-
         // Randomly generate map with obstacles (tree and rock)
         let mut rng = rand::thread_rng();
         for y in 0..height {
@@ -82,26 +81,27 @@ impl Map {
                 }
             }
         }
-
         // Place the player in the center of the initial chunk
         let chunk_size = 30;
         let chunk_center_x = chunk_size / 2;
         let chunk_center_y = chunk_size / 2;
         tiles[chunk_center_y][chunk_center_x] = Tile::Player;
-
+        // Set the player's position
+        let player_x = chunk_center_x;
+        let player_y = chunk_center_y;
+        tiles[player_y][player_x] = Tile::Player;
         // Place campfire south of player
         let campfire_x = chunk_center_x;
         let campfire_y = chunk_center_y + 1;
         if campfire_y < height {
             tiles[campfire_y][campfire_x] = Tile::Campfire;
         }
-
         Self {
             width,
             height,
             tiles,
-            player_x: chunk_center_x,
-            player_y: chunk_center_y,
+            player_x,
+            player_y,
             view_radius: 15, // Default to 15 for a 30x30 view
             campfire_x,
             campfire_y,
@@ -216,54 +216,40 @@ impl Map {
         serialized
     }
 
-    pub fn deserialize_map(width: usize, height: usize, data: &str) -> Self {
+    pub fn deserialize_map(
+        width: usize,
+        height: usize,
+        data: &str,
+        player_x: usize,
+        player_y: usize,
+    ) -> Self {
         let mut tiles = vec![vec![Tile::Empty; width]; height];
-        // Parse 'data' to populate 'tiles'
-        // Example parsing logic (adjust as needed)
+        
+        // Parse the map data
         for (y, line) in data.lines().enumerate() {
             for (x, ch) in line.chars().enumerate() {
-                if y < height && x < width {
-                    tiles[y][x] = match ch {
-                        'p' => Tile::Player,
-                        '#' => Tile::Campfire,
-                        't' => Tile::Tree,
-                        'r' => Tile::Rock,
-                        _ => Tile::Empty,
-                    };
-                }
-            }
-        }
-        // Extract player and campfire positions
-        let mut player_x = 0;
-        let mut player_y = 0;
-        let mut campfire_x = 0;
-        let mut campfire_y = 0;
-        
-        for y in 0..height {
-            for x in 0..width {
-                match tiles[y][x] {
-                    Tile::Player => {
-                        player_x = x;
-                        player_y = y;
-                    }
-                    Tile::Campfire => {
-                        campfire_x = x;
-                        campfire_y = y;
-                    }
-                    _ => {}
-                }
+                tiles[y][x] = Tile::from_char(ch);
             }
         }
 
-        Self {
+        // Set the player's position
+        tiles[player_y][player_x] = Tile::Player;
+
+        // Initialize campfire positions (ensure these are set appropriately)
+        // For example, you might have stored campfire_x and campfire_y in CharacterSave
+        // If not, you need to handle their deserialization accordingly
+        let campfire_x = 0; // Placeholder: Set actual value
+        let campfire_y = 0; // Placeholder: Set actual value
+
+        Map {
             width,
             height,
             tiles,
             player_x,
             player_y,
+            view_radius: 15, // Adjust as needed
             campfire_x,
             campfire_y,
-            view_radius: 15, // Example value
         }
     }
 

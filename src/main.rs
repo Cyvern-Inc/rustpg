@@ -361,25 +361,38 @@ fn load_game(save_folder: &Path) {
         &fs::read_to_string(&character_file_path).expect("Failed to read character file"),
     )
     .expect("Failed to parse character file");
-
-    // Deserialize the map data
+    
+    // Deserialize the map data with player coordinates
     let map_file_path = save_folder.join("map.txt");
     let map_data_str = fs::read_to_string(&map_file_path).expect("Failed to read map file");
-    let mut map_data = Map::deserialize_map(300, 300, &map_data_str);
-
+    
+    // Ensure that `player_x` and `player_y` are correctly retrieved from `character_data`
+    let mut map_data = Map::deserialize_map(
+        character_data.game_map.width, 
+        character_data.game_map.height, 
+        &map_data_str, 
+        character_data.player_x, 
+        character_data.player_y
+    );
+    
     // Initialize the player and set their position
     let mut player = Player::new();
     player.set_position(character_data.player_x, character_data.player_y);
-
-    // Clear existing player positions to avoid duplicates
+    
+    // Clear any existing player positions to avoid duplicates
     map_data.clear_player_positions();
-
-    // Set the player's current position on the map
+    
+    // Set the player's position on the map
     map_data.set_tile(character_data.player_x, character_data.player_y, Tile::Player);
 
+    println!(
+        "Loaded Player Position: ({}, {})",
+        character_data.player_x, character_data.player_y
+    );
+    
     // Load quests and other data as needed
     let quests = sample_quests();
-
+    
     // Start the game loop with the updated player and map
     game_loop(
         player,
@@ -480,7 +493,33 @@ fn game_loop(
         let input = input.trim();
 
         if input == "faf" && !player.in_combat {
-            faf(&mut player, &mut game_map);
+            println!("Initiating automatic movement...");
+            if faf(&mut player, &mut game_map) {
+                // Enemy encountered during automatic movement
+                new_action = "Enemy encountered during automatic movement.".to_string();
+                recent_actions.push_back(new_action.clone());
+
+                // Proceed to handle combat
+                let mut rng = rand::thread_rng();
+                let enemies = basic_enemies();
+                let enemy = enemies[rng.gen_range(0..enemies.len())].clone();
+                let loot_tables = create_loot_tables();
+
+                let combat_result = handle_combat(&mut player, enemy, &loot_tables);
+                println!("{}", combat_result);
+                player.in_combat = false;
+
+                if player.health <= 0 {
+                    println!("You have been defeated!");
+                    println!("Press Enter to respawn...");
+                    let _ = io::stdin().read_line(&mut String::new());
+                    player.respawn(&mut game_map);
+                    new_action = "Player has respawned.".to_string();
+                }
+            } else {
+                new_action = "Automatic movement completed.".to_string();
+                recent_actions.push_back(new_action.clone());
+            }
             continue;
         }
 
