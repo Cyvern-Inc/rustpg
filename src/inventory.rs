@@ -304,20 +304,6 @@ pub fn display_and_handle_inventory(
 ) -> String {
     // Display inventory
     display_inventory(player, item_type_filter);
-
-    // Show prompt
-    println!("Enter item name to use (or press Enter to skip):");
-    io::stdout().flush().unwrap();
-
-    let mut item_name = String::new();
-    io::stdin()
-        .read_line(&mut item_name)
-        .expect("Failed to read line");
-    let item_name = item_name.trim();
-
-    if !item_name.is_empty() {
-        handle_eat_command(player, item_name)
-    } else {
+    // Return message
         "Viewed inventory.".to_string()
-    }
 }

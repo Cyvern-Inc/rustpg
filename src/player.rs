@@ -1,11 +1,13 @@
+use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use crate::skill::{Skill, initialize_skills};
 use crate::items::get_starting_items;
 use crate::quest::Quest;
 use crate::items::{Item, ItemType};
 use crate::items::create_items;
+use crate::map::{Map, Direction};
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Player {
     pub health: i32,
     pub max_health: i32,
@@ -18,14 +20,17 @@ pub struct Player {
     pub equipped_armor: Option<Item>,
     pub skills: HashMap<String, Skill>,
     pub active_quest: Option<Quest>,
-    pub in_combat: bool, // Field to track whether the player is in combat or not
+    pub in_combat: bool,
+    pub facing: Direction,
+    pub x: usize,
+    pub y: usize,
 }
 
 impl Player {
     pub fn new() -> Self {
         let mut player = Player {
             health: 100,
-            max_health: 100, // Initialize max_health
+            max_health: 100,
             attack: 10,
             level: 1,
             experience: 0,
@@ -35,7 +40,10 @@ impl Player {
             equipped_armor: None,
             skills: initialize_skills(),
             active_quest: None,
-            in_combat: false, // Initially not in combat
+            in_combat: false,
+            facing: Direction::Down, // Initially facing south
+            x: 0, // Default position
+            y: 0,
         };
         player.add_starting_items();
         player
@@ -90,7 +98,6 @@ impl Player {
         self.level += 1;
         self.health = self.max_health; // Restore health to max on level up
         println!("Player leveled up to level {}!", self.level);
-
     }
 
     pub fn display_status(&self) -> String {
@@ -104,6 +111,10 @@ impl Player {
             }
         }
         status
+    }
+
+    pub fn interact(&self, map: &Map) -> Option<String> {
+        map.interact(self)
     }
 
     // Train a skill by adding experience to it
@@ -166,5 +177,40 @@ impl Player {
 
     pub fn total_level(&self) -> i32 {
         self.skills.values().map(|skill| skill.level.min(99)).sum()
+    }
+
+    pub fn respawn(&mut self, map: &mut Map) {
+        self.health = self.max_health;
+        self.in_combat = false;
+        self.facing = Direction::Down; // Reset facing direction
+
+        map.player_x = map.campfire_x;
+        
+        // Safely handle player_y to prevent underflow
+        if map.campfire_y > 0 {
+            map.player_y = map.campfire_y - 1;
+        } else {
+            map.player_y = 0; // Default to top row if campfire_y is 0
+        }
+
+        // Ensure the new position is valid
+        if map.player_y >= map.height {
+            map.player_y = map.height - 1;
+        }
+    }
+
+    pub fn add_experience_to_skill(&mut self, skill_name: &str, amount: f32) {
+        if let Some(skill) = self.skills.get_mut(skill_name) {
+            skill.add_experience(amount);
+            println!("{} gained {} XP.", skill_name, amount);
+        } else {
+            println!("Skill not found: {}", skill_name);
+        }
+    }
+
+    // Method to set position
+    pub fn set_position(&mut self, x: usize, y: usize) {
+        self.x = x;
+        self.y = y;
     }
 }
