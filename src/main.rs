@@ -15,6 +15,7 @@ use crate::map::Tile;
 use crate::player::Player;
 use crate::quest::{sample_quests, starting_quest, Quest};
 use crate::skill::Skill;
+use crate::utils::should_encounter_enemy;
 use chrono::{DateTime, Local};
 use enemy::basic_enemies;
 use map::{Direction, Map};
@@ -487,9 +488,9 @@ fn game_loop(
                     new_action = format!("Player moved {:?}", direction);
 
                     // Random enemy encounter logic
-                    let mut rng = rand::thread_rng();
-                    if (rng.gen_range(0..100) < 20) {
-                        // 20% chance to encounter an enemy
+                    if should_encounter_enemy(1) { // 1% chance
+                        // Enemy encounter logic
+                        let mut rng = rand::thread_rng();
                         let enemies = basic_enemies();
                         let enemy = enemies[rng.gen_range(0..enemies.len())].clone();
                         let loot_tables = create_loot_tables();

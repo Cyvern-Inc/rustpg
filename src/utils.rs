@@ -2,6 +2,7 @@
 
 use crate::map::{Direction, Map};
 use crate::player::Player;
+use log::{debug, info};
 use rand::Rng;
 use std::io::{self, Read, Write};
 use std::thread;
@@ -56,7 +57,7 @@ pub fn faf(player: &mut Player, game_map: &mut Map) {
         prev_direction = direction;
 
         // Check for enemy encounter
-        if rng.gen_range(0..100) < 20 {
+        if should_encounter_enemy(20) {
             // Exit faf mode to start combat
             break;
         }
@@ -121,4 +122,13 @@ fn get_weighted_random_direction(
 fn check_for_input() -> Option<String> {
     // Use a crate like `crossterm` or `termion` to handle non-blocking input
     None // Placeholder implementation
+}
+
+pub fn should_encounter_enemy(chance: u8) -> bool {
+    let mut rng = rand::thread_rng();
+    let encounter = rng.gen_range(0..100) < chance;
+    if encounter {
+        debug!("Enemy encounter triggered with chance: {}", chance);
+    }
+    encounter
 }
