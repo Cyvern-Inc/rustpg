@@ -174,7 +174,7 @@ impl Player {
     // Train a skill by adding experience to it
     pub fn train_skill(&mut self, skill_name: &str, xp_gain: f32) {
         if let Some(skill) = self.skills.get_mut(skill_name) {
-            skill.add_experience(xp_gain);
+            skill.add_experience(xp_gain as f64);
             skill.display_skill_info();
         } else {
             println!("Skill not found: {}", skill_name);
@@ -255,7 +255,7 @@ impl Player {
 
     pub fn add_experience_to_skill(&mut self, skill_name: &str, amount: f32) {
         if let Some(skill) = self.skills.get_mut(skill_name) {
-            skill.add_experience(amount);
+            skill.add_experience(amount as f64);
             println!("{} gained {} XP.", skill_name, amount);
         } else {
             println!("Skill not found: {}", skill_name);

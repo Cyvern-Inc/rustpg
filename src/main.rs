@@ -421,7 +421,7 @@ fn save_game(player: &Player, game_map: &Map, save_folder: &Path, character_name
         skills: player
             .skills
             .iter()
-            .map(|(name, skill)| (name.clone(), skill.level, skill.experience))
+            .map(|(name, skill)| (name.clone(), skill.level, skill.experience as f32))
             .collect(),
         player_x: game_map.player_x,
         player_y: game_map.player_y,
@@ -448,7 +448,7 @@ fn game_loop(
     save_folder: PathBuf,
     character_name: String,
 ) {
-    let mut recent_actions: VecDeque<String> = VecDeque::with_capacity(3);
+    let mut recent_actions: VecDeque<String> = VecDeque::new();
     let mut new_action: String = String::new();
 
     // Determine view size based on terminal height
@@ -478,6 +478,13 @@ fn game_loop(
         let map_lines: Vec<&str> = map_str.lines().collect();
         let map_height = map_lines.len();
 
+        // Calculate the maximum number of recent actions based on map height
+        let max_recent_actions = if map_height > 1 {
+            map_height - 1
+        } else {
+            0
+        };
+
         // Prepare menu lines
         let mut menu_lines = Vec::new();
         menu_lines.push("(w/a/s/d) move | (status) player status | (quests) view quests");
@@ -489,18 +496,12 @@ fn game_loop(
         // If not in combat, add recent actions
         if !player.in_combat {
             info_lines.push("Recent Actions:");
-
-            // Calculate the maximum number of recent actions based on map height
-            let max_recent_actions = if map_height > 1 { map_height - 1 } else { 0 };
-
             // Get the last `max_recent_actions` actions
             let actions_to_display: Vec<&String> = recent_actions.iter().rev().take(max_recent_actions).collect();
-
             // Add recent actions in original order
             for action in actions_to_display.iter().rev() {
                 info_lines.push(action);
             }
-
             // Pad with "----------" to ensure exactly `max_recent_actions` lines
             for _ in actions_to_display.len()..max_recent_actions {
                 info_lines.push("----------");
@@ -521,15 +522,17 @@ fn game_loop(
 
         // Iterate through each line index and print map and recent actions side by side
         for i in 0..max_lines {
-            let map_line = map_lines.get(i).unwrap_or(&"");
-            let info_line = info_lines.get(i).unwrap_or(&"");
-            println!(
-                "{:<width$}{}{}",
-                map_line,
-                SEPARATOR,
-                info_line,
-                width = map_width
-            );
+            let map_part = if i < map_lines.len() {
+                map_lines[i]
+            } else {
+                ""
+            };
+            let info_part = if i < info_lines.len() {
+                info_lines[i]
+            } else {
+                ""
+            };
+            println!("{:<width$}{}{}", map_part, SEPARATOR, info_part, width = map_width);
         }
 
         // Print the prompt below the map and recent actions
@@ -646,8 +649,8 @@ fn game_loop(
 
         // Add the new action to the recent actions queue if not in combat
         if !player.in_combat {
-            if recent_actions.len() == 3 {
-                recent_actions.pop_front(); // Remove the oldest action if at capacity
+            if recent_actions.len() == max_recent_actions {
+                recent_actions.pop_front();
             }
             recent_actions.push_back(new_action.clone()); // Clone new_action here to keep the original value intact
         }
