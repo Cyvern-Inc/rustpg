@@ -1,38 +1,74 @@
+use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 use crate::skill::{Skill, initialize_skills};
-use crate::items::create_items;
-use crate::items::{Item, ItemType};
+use crate::items::get_starting_items;
 use crate::quest::Quest;
+use crate::items::{Item, ItemType};
+use crate::items::create_items;
+use crate::map::{Map, Direction};
+use std::io::{self, Write};
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Player {
     pub health: i32,
     pub max_health: i32,
     pub attack: i32,
     pub level: i32,
     pub experience: i32,
-    pub inventory: HashMap<u32, i32>,
+    pub quests: Vec<Quest>,
+    pub inventory: HashMap<u32, u32>,
+    pub equipped_weapon: Option<Item>,
+    pub equipped_armor: Option<Item>,
     pub skills: HashMap<String, Skill>,
     pub active_quest: Option<Quest>,
-    pub in_combat: bool, // Field to track whether the player is in combat or not
+    pub in_combat: bool,
+    pub facing: Direction,
+    pub x: usize,
+    pub y: usize,
 }
 
 impl Player {
     pub fn new() -> Self {
-        Player {
+        let mut player = Player {
             health: 100,
-            max_health: 100, // Initialize max_health
+            max_health: 100,
             attack: 10,
             level: 1,
             experience: 0,
+            quests: vec![],
             inventory: HashMap::new(),
+            equipped_weapon: None,
+            equipped_armor: None,
             skills: initialize_skills(),
             active_quest: None,
-            in_combat: false, // Initially not in combat
+            in_combat: false,
+            facing: Direction::Down, // Initially facing south
+            x: 0, // Default position
+            y: 0,
+        };
+        player.add_starting_items();
+        player
+    }
+
+    pub fn add_quest(&mut self, quest: Quest) {
+        self.quests.push(quest);
+    }
+
+    pub fn complete_quest(&mut self, quest_id: u32) {
+        if let Some(quest) = self.quests.iter_mut().find(|q| q.id == quest_id) {
+            quest.complete();
+            println!("Quest '{}' completed!", quest.name);
         }
     }
 
-    pub fn add_item_to_inventory(&mut self, item_id: u32, quantity: i32) {
+    pub fn add_item_to_inventory(&mut self, item_id: u32, quantity: u32) {
         *self.inventory.entry(item_id).or_insert(0) += quantity;
+    }
+
+    pub fn add_starting_items(&mut self) {
+        for (item_id, quantity) in get_starting_items() {
+            self.add_item_to_inventory(item_id, quantity);
+        }
     }
 
     pub fn display_inventory(&self) {
@@ -59,37 +95,86 @@ impl Player {
         }
     }
 
-    fn level_up(&mut self) {
+    pub fn level_up(&mut self) {
         self.level += 1;
-        self.experience = 0;
-        self.attack += 5;
-        self.max_health += 20; // Increase max health on level up
         self.health = self.max_health; // Restore health to max on level up
         println!("Player leveled up to level {}!", self.level);
-
-        // Leveling up skills as well
-        for skill in self.skills.values_mut() {
-            skill.level_up();
-        }
     }
 
     pub fn display_status(&self) -> String {
-        let mut status = format!(
-            "Health: {}/{}\nLevel: {}\nExperience: {}\nInventory:\n",
-            self.health, self.max_health, self.level, self.experience
-        );
+        let mut status = String::new();
+
+        // Clear the terminal
+        print!("\x1B[2J\x1B[1;1H");
+        io::stdout().flush().unwrap();
+
+        // Render the top menu
+        println!("(w/a/s/d) move | (status) player status | (quests) view quests");
+        println!("(i) inventory | (m) menu | (q) quit");
+        println!();
+
+        // Left Column: Health, Level, Experience
+        let left_column = vec![
+            format!("Health:    {}/{}", self.health, self.max_health),
+            format!("Level:     {}", self.level),
+            format!("Experience: {}", self.experience),
+            String::from("Skills:"),
+        ];
+
+        // Skills Lines
+        let mut skills_lines: Vec<String> = Vec::new();
+        for (skill_name, skill) in &self.skills {
+            skills_lines.push(format!(
+                "- {}: Level {} (XP: {})",
+                skill_name, skill.level, skill.experience
+            ));
+        }
+
+        // Combine Health, Level, Experience with Skills
+        let mut left_combined = left_column.clone();
+        left_combined.extend(skills_lines);
+
+        // Right Column: Inventory
+        let mut right_combined = vec![String::from("Inventory:")];
         for (item_id, quantity) in &self.inventory {
             if let Some(item) = create_items().get(item_id) {
-                status.push_str(&format!("  - {} x{}\n", item.name, quantity));
+                right_combined.push(format!("- {} x{}", item.name, quantity));
             }
         }
+
+        // Determine the maximum number of lines between left and right
+        let max_lines = left_combined.len().max(right_combined.len());
+
+        // Iterate and combine lines side by side
+        for i in 0..max_lines {
+            let left = if i < left_combined.len() {
+                &left_combined[i]
+            } else {
+                ""
+            };
+
+            let right = if i < right_combined.len() {
+                &right_combined[i]
+            } else {
+                ""
+            };
+
+            // Define the width for the left column to ensure proper spacing
+            // Adjust the width as needed based on the longest line in the left column
+            status.push_str(&format!("{:<40} {}\n", left, right));
+        }
+
         status
+    }
+
+    pub fn interact(&self, map: &Map) -> Option<String> {
+        map.interact(self)
     }
 
     // Train a skill by adding experience to it
     pub fn train_skill(&mut self, skill_name: &str, xp_gain: f32) {
         if let Some(skill) = self.skills.get_mut(skill_name) {
-            skill.add_experience(xp_gain);
+            skill.add_experience(xp_gain as f64);
             skill.display_skill_info();
         } else {
             println!("Skill not found: {}", skill_name);
@@ -98,39 +183,8 @@ impl Player {
 
     // Add loot to player's inventory
     pub fn add_loot(&mut self, loot: &HashMap<u32, u32>) {
-        for (item_id, quantity) in loot {
-            *self.inventory.entry(*item_id).or_insert(0) += *quantity as i32;
-        }
-    }
-
-    // Consume an item from inventory
-    pub fn consume_item(&mut self, item_id: u32) {
-        if let Some(quantity) = self.inventory.get_mut(&item_id) {
-            if *quantity > 0 {
-                *quantity -= 1;
-                if *quantity == 0 {
-                    self.inventory.remove(&item_id);
-                }
-                // Apply item effects (example for health potion)
-                if let Some(item) = create_items().get(&item_id) {
-                    match item.item_type {
-                        ItemType::Consumable => {
-                            if item.name.to_lowercase().contains("potion") {
-                                self.health += 30; // Assume potion restores 30 health
-                                if self.health > self.max_health {
-                                    self.health = self.max_health; // Cap health at max health
-                                }
-                                println!("You used {} and restored health. Current health: {}/{}", item.name, self.health, self.max_health);
-                            }
-                        }
-                        _ => println!("Item used: {}", item.name),
-                    }
-                }
-            } else {
-                println!("You don't have any {} left.", create_items().get(&item_id).unwrap().name);
-            }
-        } else {
-            println!("Item not found in inventory.");
+        for (&item_id, &quantity) in loot {
+            *self.inventory.entry(item_id).or_insert(0) += quantity;
         }
     }
 
@@ -160,5 +214,57 @@ impl Player {
     // Method to handle player exiting combat
     pub fn exit_combat(&mut self) {
         self.in_combat = false;
+    }
+
+    pub fn remove_item(&mut self, item_id: u32, amount: u32) -> bool {
+        if let Some(quantity) = self.inventory.get_mut(&item_id) {
+            if *quantity >= amount {
+                *quantity -= amount;
+                if *quantity == 0 {
+                    self.inventory.remove(&item_id);
+                }
+                return true;
+            }
+        }
+        false
+    }
+
+    pub fn total_level(&self) -> i32 {
+        self.skills.values().map(|skill| skill.level.min(99)).sum()
+    }
+
+    pub fn respawn(&mut self, map: &mut Map) {
+        self.health = self.max_health;
+        self.in_combat = false;
+        self.facing = Direction::Down; // Reset facing direction
+
+        map.player_x = map.campfire_x;
+        
+        // Safely handle player_y to prevent underflow
+        if map.campfire_y > 0 {
+            map.player_y = map.campfire_y - 1;
+        } else {
+            map.player_y = 0; // Default to top row if campfire_y is 0
+        }
+
+        // Ensure the new position is valid
+        if map.player_y >= map.height {
+            map.player_y = map.height - 1;
+        }
+    }
+
+    pub fn add_experience_to_skill(&mut self, skill_name: &str, amount: f32) {
+        if let Some(skill) = self.skills.get_mut(skill_name) {
+            skill.add_experience(amount as f64);
+            println!("{} gained {} XP.", skill_name, amount);
+        } else {
+            println!("Skill not found: {}", skill_name);
+        }
+    }
+
+    // Method to set position
+    pub fn set_position(&mut self, x: usize, y: usize) {
+        self.x = x;
+        self.y = y;
     }
 }

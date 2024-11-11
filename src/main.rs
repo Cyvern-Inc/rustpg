@@ -1,489 +1,581 @@
-mod player;
+mod combat;
 mod enemy;
-mod map;
-mod quest;
-mod utils;
-mod skill;
+mod inventory;
 mod items;
+mod map;
+mod player;
+mod quest;
+mod skill;
+mod utils;
 
-use player::Player;
-use map::{Map, Direction};
-use quest::{Quest, sample_quests};
-use enemy::Enemy;
+use crate::combat::handle_combat;
+use crate::inventory::display_and_handle_inventory;
+use crate::items::create_loot_tables;
+use crate::map::Tile;
+use crate::player::Player;
+use crate::quest::{sample_quests, starting_quest, Quest};
+use crate::utils::{faf, should_encounter_enemy};
+use chrono::{DateTime, Local};
+use enemy::basic_enemies;
+use map::{Direction, Map};
+use rand::Rng;
+use regex::Regex;
+use serde::{Deserialize, Serialize};
+use serde_json;
 use skill::initialize_skills;
 use std::collections::VecDeque;
+use std::fs::{self, create_dir_all};
 use std::io::{self, Write};
-use std::fs;
-use std::path::Path;
-use serde::{Serialize, Deserialize};
-use serde_json;
-use std::panic;
-use rand::Rng;
-use enemy::basic_enemies;
-use crate::items::{ItemType, create_items, create_loot_tables};
+use std::path::{Path, PathBuf};
 use term_size;
-use std::collections::HashMap;
-use crate::items::{LootTable, calculate_loot};
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 struct CharacterSave {
+    player: Player,
+    game_map: Map,
+    quests: Vec<Quest>,
+    character_name: String,
     name: String,
     health: i32,
     level: i32,
     experience: i32,
-    skills: Vec<(String, i32, i32)>, // Skill name, level, experience
+    skills: Vec<(String, i32, f32)>,
     player_x: usize,
     player_y: usize,
     current_map: String,
+    inventory: std::collections::HashMap<u32, u32>,
 }
 
-fn main() {
-    // Set a panic hook to ensure any panic properly prints and cleans up terminal
-    panic::set_hook(Box::new(|panic_info| {
-        println!("Application panicked: {}", panic_info);
-    }));
+// ====================//
+// Game Initialization //
+// ====================//
 
-    // Check if the "Saves" folder exists, create if not
+fn main() {
+    let version = option_env!("VERSION").unwrap_or("unknown version");
+    let build_number = option_env!("BUILD_NUMBER").unwrap_or("unknown build");
     let saves_path = Path::new("Saves");
     if !saves_path.exists() {
         fs::create_dir(saves_path).expect("Failed to create Saves folder");
     }
 
-    // Display initial menu
     loop {
-        println!("1. New Game\n2. Continue\n3. Load Save\n(q) Quit");
-        print!("Enter your choice: ");
+        print!("\x1B[2J\x1B[1;1H");
+        io::stdout().flush().unwrap();
+
+        println!("rustpg version {} build {}\n", version, build_number);
+
+        println!("1. New Game");
+        println!("2. Continue");
+        println!("3. Load Save");
+        println!("\n(q)uit");
+
+        print!("\nEnter your choice: ");
         io::stdout().flush().unwrap();
         let mut choice = String::new();
-        io::stdin().read_line(&mut choice).expect("Failed to read line");
+        io::stdin()
+            .read_line(&mut choice)
+            .expect("Failed to read line");
         let choice = choice.trim();
 
         match choice {
-            "1" => {
-                new_game();
-                break;
-            }
+            "1" => new_game(),
             "2" => {
                 if let Some(recent_save) = get_recent_save() {
                     load_game(&recent_save);
-                    break;
                 } else {
-                    println!("No recent save found.");
+                    println!("No recent save found. Press Enter to continue...");
+                    let _ = io::stdin().read_line(&mut String::new());
                 }
             }
             "3" => {
                 if let Some(save) = load_save_menu() {
                     load_game(&save);
-                    break;
                 }
             }
-            "q" => return,
-            _ => println!("Invalid choice. Please try again."),
+            "q" => std::process::exit(0),
+            _ => {
+                println!("Invalid choice. Please try again. Press Enter to continue...");
+                let _ = io::stdin().read_line(&mut String::new());
+            }
         }
     }
 }
 
 fn new_game() {
-    // Prompt for character name
-    println!("Enter your character's name: ");
-    let mut character_name = String::new();
-    io::stdin().read_line(&mut character_name).expect("Failed to read line");
-    let character_name = character_name.trim().to_string();
-
-    // Create save folder for the character
-    let save_folder = format!("Saves/save1_{}", character_name);
-    fs::create_dir(&save_folder).expect("Failed to create save folder");
-
-    // Initialize player and map
-    let mut player = Player::new();
-    let game_map = Map::new(300, 300);  // Generate a new map
-    player.skills = initialize_skills();
-
-    // Load sample quests
-    let quests = sample_quests();
-
-    // Save character and map data
-    save_game(&player, &game_map, &save_folder, &character_name);
-
-    // Continue with the game loop
-    game_loop(player, game_map, quests, save_folder.clone(), character_name);
+    loop {
+        print!("\x1B[2J\x1B[1;1H");
+        io::stdout().flush().unwrap();
+        println!(
+            "rustpg version {} build {}\n",
+            option_env!("VERSION").unwrap_or("unknown version"),
+            option_env!("BUILD_NUMBER").unwrap_or("unknown build")
+        );
+        println!("Enter your character's name (max 32 characters, no special characters):");
+        println!("(b)ack\n(q)uit");
+        print!("\nEnter your choice: ");
+        io::stdout().flush().unwrap();
+        let mut character_name = String::new();
+        io::stdin()
+            .read_line(&mut character_name)
+            .expect("Failed to read line");
+        let character_name = character_name.trim();
+        if character_name == "q" {
+            std::process::exit(0);
+        } else if character_name == "b" {
+            break;
+        }
+        if character_name.is_empty()
+            || character_name.len() > 32
+            || !character_name
+                .chars()
+                .all(|c| c.is_alphanumeric() || c.is_whitespace())
+        {
+            println!("Invalid name. Please enter a valid name.");
+            println!("\nPress Enter to continue...");
+            let _ = io::stdin().read_line(&mut String::new());
+            continue;
+        }
+        let sanitized_name = if character_name.starts_with('*') {
+            character_name[1..].to_string()
+        } else {
+            character_name.to_string()
+        };
+        // Proceed with creating the game
+        let save_folder = Path::new("Saves").join(&sanitized_name);
+        create_dir_all(&save_folder).expect("Failed to create save directory");
+        let mut player = Player::new();
+        let mut game_map = Map::new(300, 300);
+        player.skills = initialize_skills();
+        let quest = starting_quest();
+        player.add_quest(quest.clone());
+        let quests = sample_quests();
+        game_map.campfire_x = game_map.player_x;
+        game_map.campfire_y = game_map.player_y + 1;
+        game_map.set_tile(game_map.campfire_x, game_map.campfire_y, Tile::Campfire);
+        save_game(&player, &game_map, &save_folder, &sanitized_name);
+        game_loop(
+            player,
+            game_map,
+            quests,
+            save_folder.to_path_buf(),
+            sanitized_name,
+        );
+        break;
+    }
 }
 
-fn get_recent_save() -> Option<String> {
-    // Find the most recently modified save directory
+fn sanitize_character_name(name: &str) -> String {
+    let trimmed_name = name.trim();
+    let space_reduced_name = Regex::new(r"\s+").unwrap().replace_all(trimmed_name, " ");
+    space_reduced_name.to_string()
+}
+
+fn get_recent_save() -> Option<PathBuf> {
     let saves_path = Path::new("Saves");
     let mut save_dirs: Vec<_> = fs::read_dir(saves_path)
-    .expect("Failed to read Saves directory")
-    .filter_map(|entry| entry.ok())
-    .filter(|entry| entry.file_type().unwrap().is_dir())
-    .collect();
+        .expect("Failed to read Saves directory")
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().unwrap().is_dir())
+        .collect();
 
     save_dirs.sort_by_key(|entry| fs::metadata(entry.path()).unwrap().modified().unwrap());
-    save_dirs.last().map(|entry| entry.path().to_str().unwrap().to_string())
+    save_dirs.last().map(|entry| entry.path())
 }
 
-fn load_save_menu() -> Option<String> {
-    // List all saves in the "Saves" directory
+fn load_save_menu() -> Option<PathBuf> {
     let saves_path = Path::new("Saves");
-    let save_dirs: Vec<_> = fs::read_dir(saves_path)
-    .expect("Failed to read Saves directory")
-    .filter_map(|entry| entry.ok())
-    .filter(|entry| entry.file_type().unwrap().is_dir())
-    .collect();
+    let mut save_dirs: Vec<_> = fs::read_dir(saves_path)
+        .expect("Failed to read Saves directory")
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| entry.file_type().unwrap().is_dir())
+        .collect();
+
+    save_dirs.sort_by_key(|entry| fs::metadata(entry.path()).unwrap().modified().unwrap());
+    save_dirs.reverse();
+
+    print!("\x1B[2J\x1B[1;1H");
+    io::stdout().flush().unwrap();
+
+    println!(
+        "rustpg version {} build {}\n",
+        option_env!("VERSION").unwrap_or("unknown version"),
+        option_env!("BUILD_NUMBER").unwrap_or("unknown build")
+    );
 
     if save_dirs.is_empty() {
         println!("No saves found.");
+        println!("\n(b)ack, (q)uit");
+        print!("\nSelect a save to load: ");
+        io::stdout().flush().unwrap();
         return None;
     }
 
     println!("Select a save to load:");
     for (i, entry) in save_dirs.iter().enumerate() {
         let save_name = entry.file_name().into_string().unwrap();
-        println!("{}. {}", i + 1, save_name);
+        let metadata = fs::metadata(entry.path()).unwrap();
+        let modified: DateTime<Local> = DateTime::from(metadata.modified().unwrap());
+
+        let level = get_player_level(&entry.path()).unwrap_or(1);
+
+        println!(
+            "{}. {} | lvl {} | {}",
+            i + 1,
+            save_name,
+            level,
+            modified.format("%b, %d %Y")
+        );
     }
-    println!("(Backspace) return to main menu\n(q) quit");
+
+    println!("\n(dup)licate, (del)ete, (b)ack, (q)uit");
+    print!("\nSelect a save to load: ");
+    io::stdout().flush().unwrap();
 
     let mut choice = String::new();
-    io::stdin().read_line(&mut choice).expect("Failed to read line");
+    io::stdin()
+        .read_line(&mut choice)
+        .expect("Failed to read line");
     let choice = choice.trim();
 
     if choice == "q" {
+        std::process::exit(0);
+    } else if choice == "b" {
         return None;
+    }
+
+    if let Some(name) = choice.strip_prefix("del ") {
+        let target_name = name.trim();
+        if let Some(target_save) = save_dirs.iter().find(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(target_name)
+        }) {
+            println!(
+                "Are you sure you want to delete the save for '{}'?\n(type 'yes' to confirm):",
+                target_name
+            );
+            let mut confirm = String::new();
+            io::stdin()
+                .read_line(&mut confirm)
+                .expect("Failed to read line");
+            if confirm.trim().eq_ignore_ascii_case("yes") {
+                if let Err(e) = fs::remove_dir_all(target_save.path()) {
+                    println!("Failed to delete save: {}", e);
+                } else {
+                    println!("Save for '{}' has been deleted successfully.", target_name);
+                }
+            } else {
+                println!("Delete action cancelled.");
+            }
+        } else {
+            println!("Save for '{}' not found.", target_name);
+        }
+        println!("Press Enter to continue...");
+        let _ = io::stdin().read_line(&mut String::new());
+        return load_save_menu();
+    }
+
+    if let Some(name) = choice.strip_prefix("dup ") {
+        let target_name = name.trim();
+        if let Some(old_save) = save_dirs.iter().find(|entry| {
+            entry
+                .file_name()
+                .to_string_lossy()
+                .eq_ignore_ascii_case(target_name)
+        }) {
+            println!("Enter a name for the duplicated save:");
+            let mut new_name = String::new();
+            io::stdin()
+                .read_line(&mut new_name)
+                .expect("Failed to read line");
+            let new_name = sanitize_character_name(&new_name);
+            let new_path = saves_path.join(&new_name);
+            if new_path.exists() {
+                println!(
+                    "A save with the name '{}' already exists. Please choose a different name.",
+                    new_name
+                );
+            } else if let Err(e) = create_dir_all(&new_path) {
+                println!("Failed to create duplicate save directory: {}", e);
+            } else if let Err(e) = copy_save_folder(&old_save.path(), &new_path) {
+                println!("Failed to copy save directory: {}", e);
+            } else {
+                println!(
+                    "Save for '{}' has been duplicated successfully to '{}'.",
+                    target_name, new_name
+                );
+            }
+            println!("Press Enter to continue...");
+            let _ = io::stdin().read_line(&mut String::new());
+            return load_save_menu();
+        } else {
+            println!("Save for '{}' not found.", target_name);
+            println!("Press Enter to continue...");
+            let _ = io::stdin().read_line(&mut String::new());
+            return load_save_menu();
+        }
     }
 
     if let Ok(index) = choice.parse::<usize>() {
         if index > 0 && index <= save_dirs.len() {
-            return Some(save_dirs[index - 1].path().to_str().unwrap().to_string());
+            return Some(
+                save_dirs[index - 1]
+                    .path()
+                    .to_str()
+                    .unwrap()
+                    .to_string()
+                    .into(),
+            );
         }
     }
 
-    None
+    println!("Invalid choice. Press Enter to continue...");
+    let _ = io::stdin().read_line(&mut String::new());
+    load_save_menu()
 }
 
-fn load_game(save_folder: &str) {
-    // Load character data
-    let character_file_path = format!("{}/character.json", save_folder);
-    let character_data: CharacterSave = serde_json::from_str(&fs::read_to_string(&character_file_path).expect("Failed to read character file")).expect("Failed to parse character file");
+fn get_player_level(save_path: &Path) -> Option<u32> {
+    // This function would load save data and return the player's level
+    // Placeholder for now - real implementation needed
+    Some(1) // Example: default level 1
+}
 
-    // Load map data from serialized string
-    let map_file_path = format!("{}/map.txt", save_folder);
+fn copy_save_folder(from: &Path, to: &Path) -> io::Result<()> {
+    for entry in fs::read_dir(from)? {
+        let entry = entry?;
+        let to_path = to.join(entry.file_name());
+        if entry.file_type()?.is_dir() {
+            create_dir_all(&to_path)?;
+            copy_save_folder(&entry.path(), &to_path)?;
+        } else {
+            fs::copy(entry.path(), to_path)?;
+        }
+    }
+    Ok(())
+}
+
+fn load_game(save_folder: &Path) {
+    // Deserialize the saved character data
+    let character_file_path = save_folder.join("character.json");
+    let character_data: CharacterSave = serde_json::from_str(
+        &fs::read_to_string(&character_file_path).expect("Failed to read character file"),
+    )
+    .expect("Failed to parse character file");
+
+    // Deserialize the map data with player coordinates
+    let map_file_path = save_folder.join("map.txt");
     let map_data_str = fs::read_to_string(&map_file_path).expect("Failed to read map file");
-    let mut map_data = Map::deserialize_map(300, 300, &map_data_str);
 
-    // Restore player coordinates
-    map_data.player_x = character_data.player_x;
-    map_data.player_y = character_data.player_y;
+    // Ensure that `player_x` and `player_y` are correctly retrieved from `character_data`
+    let mut map_data = Map::deserialize_map(
+        character_data.game_map.width,
+        character_data.game_map.height,
+        &map_data_str,
+        character_data.player_x,
+        character_data.player_y,
+    );
 
+    // Initialize the player and set their position
     let mut player = Player::new();
-    player.health = character_data.health;
-    player.level = character_data.level;
-    player.experience = character_data.experience;
-    player.skills = initialize_skills(); // Replace with deserialization if detailed skill information needs to be restored
+    player.set_position(character_data.player_x, character_data.player_y);
 
-    // Load sample quests
+    // Clear any existing player positions to avoid duplicates
+    map_data.clear_player_positions();
+
+    // Set the player's position on the map
+    map_data.set_tile(
+        character_data.player_x,
+        character_data.player_y,
+        Tile::Player,
+    );
+
+    println!(
+        "Loaded Player Position: ({}, {})",
+        character_data.player_x, character_data.player_y
+    );
+
+    // Load quests and other data as needed
     let quests = sample_quests();
 
-    game_loop(player, map_data, quests, save_folder.to_string(), character_data.name);
+    // Start the game loop with the updated player and map
+    game_loop(
+        player,
+        map_data,
+        quests,
+        save_folder.to_path_buf(),
+        character_data.character_name,
+    );
 }
 
-
-
-fn save_game(player: &Player, game_map: &Map, save_folder: &str, character_name: &str) {
-    // Create character save file
+fn save_game(player: &Player, game_map: &Map, save_folder: &Path, character_name: &str) {
     let character_save = CharacterSave {
+        player: player.clone(),
+        game_map: game_map.clone(),
+        quests: player.quests.clone(),
+        character_name: character_name.to_string(),
         name: character_name.to_string(),
         health: player.health,
         level: player.level,
         experience: player.experience,
-        skills: vec![], // Placeholder for saving skills
+        skills: player
+            .skills
+            .iter()
+            .map(|(name, skill)| (name.clone(), skill.level, skill.experience as f32))
+            .collect(),
         player_x: game_map.player_x,
         player_y: game_map.player_y,
-        current_map: format!("{}/map.txt", save_folder),
+        current_map: save_folder.join("map.txt").to_string_lossy().into_owned(),
+        inventory: player.inventory.clone(),
     };
-    let character_save_path = format!("{}/character.json", save_folder);
-    fs::write(&character_save_path, serde_json::to_string(&character_save).unwrap()).expect("Failed to write character file");
 
-    // Create map save file using serialized RLE map representation
-    let map_save_path = format!("{}/map.txt", save_folder);
+    let character_save_path = save_folder.join("character.json");
+    fs::write(
+        &character_save_path,
+        serde_json::to_string(&character_save).unwrap(),
+    )
+    .expect("Failed to write character file");
+
+    let map_save_path = save_folder.join("map.txt");
     let serialized_map = game_map.serialize_map();
     fs::write(&map_save_path, serialized_map).expect("Failed to write map file");
 }
 
+fn game_loop(
+    mut player: Player,
+    mut game_map: Map,
+    quests: Vec<Quest>,
+    save_folder: PathBuf,
+    character_name: String,
+) {
+    let mut recent_actions: VecDeque<String> = VecDeque::new();
+    let mut new_action: String = String::new();
 
-
-fn handle_combat(player: &mut Player, mut enemy: Enemy, loot_tables: &HashMap<String, LootTable>) -> String {
-    let mut rng = rand::thread_rng();
-    let mut charging = false;
-    let mut charge_damage = 0;
-    let mut combat_message = format!("You've encountered a {}!", enemy.name);
+    // Determine view size based on terminal height
+    let view_size = if let Some((_, height)) = term_size::dimensions() {
+        if (height >= 44) {
+            30
+        } else if (height >= 29) {
+            20
+        } else {
+            10
+        }
+    } else {
+        30
+    };
+    game_map.view_radius = view_size / 2;
 
     loop {
-        // Clear terminal to provide a cleaner interface
+        // Clear the terminal
         print!("\x1B[2J\x1B[1;1H");
         io::stdout().flush().unwrap();
 
-        // Display the top menu and combat status if not defeated
-        println!("(w/a/s/d) move | (status) player status | (quests) view quests");
-        println!("(i) inventory | (m) menu | (q) quit\n");
+        // Define a separator between map and info
+        const SEPARATOR: &str = "    "; // 4 spaces
 
-        if enemy.health > 0 && player.health > 0 {
-            // Print player and enemy health during combat
-            println!("Enemy: {} (Health: {})", enemy.name, enemy.health);
-            println!("Your health: {}\n", player.health);
+        // Render the viewport
+        let map_str = game_map.render();
+        let map_lines: Vec<&str> = map_str.lines().collect();
+        let map_height = map_lines.len();
 
-            // Print the combat message (which changes as combat progresses)
-            println!("{}", combat_message);
-            println!("\nChoose (m)ain, (c)harged, (s)pell, (i)tems, or (r)un?");
-        }
-
-        let mut action = String::new();
-        io::stdin().read_line(&mut action).expect("Failed to read line");
-        let action = action.trim();
-
-        if charging {
-            // Execute the charged attack on the next round
-            enemy.take_damage(charge_damage);
-            combat_message = format!("You performed a charged attack for {} damage!", charge_damage);
-            charging = false; // Reset charging flag
-            charge_damage = 0; // Reset charge damage
-
-            // Check if the enemy is defeated
-            if enemy.is_defeated() {
-                return handle_enemy_defeat(player, &enemy, loot_tables);
-            }
+        // Calculate the maximum number of recent actions based on map height
+        let max_recent_actions = if map_height > 1 {
+            map_height - 1
         } else {
-            match action {
-                "m" => {
-                    // Perform a main attack
-                    let damage = 10; // Example main attack damage
-                    enemy.take_damage(damage);
-                    combat_message = format!("You hit the {} for {} damage!", enemy.name, damage);
-
-                    // Check if the enemy is defeated
-                    if enemy.is_defeated() {
-                        return handle_enemy_defeat(player, &enemy, loot_tables);
-                    }
-                }
-                "c" => {
-                    // Begin a charged attack (3x damage)
-                    charging = true;
-                    charge_damage = 10 * 3; // Triple the damage of a regular attack
-                    combat_message = String::from("You are preparing a charged attack...");
-                }
-                "s" => {
-                    // Perform a spell attack
-                    if player.skills.get("Magic").is_some() {
-                        let damage = 15; // Example magic attack damage
-                        enemy.take_damage(damage);
-                        combat_message = format!("You cast a spell on the {} for {} damage!", enemy.name, damage);
-
-                        // Check if enemy is defeated
-                        if enemy.is_defeated() {
-                            return handle_enemy_defeat(player, &enemy, loot_tables);
-                        }
-                    } else {
-                        combat_message = String::from("You don't have enough magic ability to cast a spell!");
-                    }
-                }
-                "i" => {
-                    // Display consumable items during combat without progressing combat
-                    loop {
-                        // Clear terminal for inventory view
-                        print!("\x1B[2J\x1B[1;1H");
-                        io::stdout().flush().unwrap();
-
-                        // Display the top menu consistently
-                        println!("(w/a/s/d) move | (status) player status | (quests) view quests");
-                        println!("(i) inventory | (m) menu | (q) quit\n");
-
-                        // Display player and enemy health again for context
-                        println!("Enemy: {} (Health: {})", enemy.name, enemy.health);
-                        println!("Your health: {}\n", player.health);
-
-                        // Render inventory view
-                        let items = create_items();
-                        let mut consumables = vec![];
-                        for (item_id, quantity) in &player.inventory {
-                            if let Some(item) = items.get(item_id) {
-                                if matches!(item.item_type, ItemType::Consumable) && *quantity > 0 {
-                                    consumables.push((item.clone(), *quantity));
-                                }
-                            }
-                        }
-
-                        if consumables.is_empty() {
-                            println!("[Consumable Items]");
-                            println!("You have no consumable items.");
-                        } else {
-                            println!("[Consumable Items]");
-                            for (item, quantity) in &consumables {
-                                println!("- {} (Quantity: {})", item.name, quantity);
-                            }
-                        }
-                        println!("\nType an item name to use it, or press enter to exit inventory.");
-
-                        let mut item_name = String::new();
-                        io::stdin().read_line(&mut item_name).expect("Failed to read line");
-                        let item_name = item_name.trim();
-
-                        if item_name.is_empty() {
-                            combat_message = String::from("Exited inventory without using an item.");
-                            break; // Exit inventory view and return to combat
-                        }
-
-                        if let Some((item, quantity)) = consumables.iter_mut().find(|(item, _)| item.name.eq_ignore_ascii_case(item_name)) {
-                            if *quantity > 0 {
-                                println!("\nYou used {}!", item.name);
-                                player.consume_item(item.id); // Update player's inventory
-                                *quantity -= 1; // Decrement the quantity of the item
-                                combat_message = format!("You used {}!", item.name);
-                                break; // Exit inventory view after using an item
-                            } else {
-                                println!("\nYou don't have any {} left.", item.name);
-                            }
-                        } else {
-                            println!("\nInvalid item selection. Try again or press enter to exit inventory.");
-                        }
-                    }
-
-                    // After inventory view, continue without progressing combat
-                    continue; // Do not allow enemy to attack in this round
-                }
-                "r" => {
-                    // Attempt to run away
-                    if rng.gen_bool(0.5) {
-                        return "You successfully ran away from combat.".to_string();
-                    } else {
-                        combat_message = format!("Failed to run away! The {} attacks!", enemy.name);
-                    }
-                }
-                _ => {
-                    combat_message = String::from("Invalid command. Please enter 'm', 'c', 's', 'i', or 'r'.");
-                    continue; // Skip enemy turn on invalid input
-                }
-            }
-        }
-
-        // Enemy retaliates if not defeated
-        enemy.attack_player(&mut player.health);
-        combat_message.push_str(&format!("\nThe {} hits you for {} damage!", enemy.name, enemy.attack));
-
-        // Check if player is defeated
-        if player.health <= 0 {
-            return handle_player_defeat(player, &enemy);
-        }
-    }
-}
-
-fn handle_enemy_defeat(player: &mut Player, enemy: &Enemy, loot_tables: &HashMap<String, LootTable>) -> String {
-    // Clear the screen before displaying combat results for a cleaner interface
-    print!("\x1B[2J\x1B[1;1H");
-    io::stdout().flush().unwrap();
-
-    // Display top menu
-    println!("(w/a/s/d) move | (status) player status | (quests) view quests");
-    println!("(i) inventory | (m) menu | (q) quit\n");
-
-    println!("You have defeated the {}!\n", enemy.name);
-
-    // Calculate and grant XP
-    let xp_gain = 10; // Example placeholder XP value
-    player.experience += xp_gain;
-
-    // Generate and add loot to player's inventory
-    let mut loot_message = String::new();
-    if let Some(loot_table) = loot_tables.get(&enemy.loot_table) {
-        let loot = calculate_loot(loot_table);
-        player.add_loot(&loot); // Add loot to player's inventory
-
-        for (item_id, quantity) in loot {
-            if let Some(item) = create_items().get(&item_id) {
-                loot_message.push_str(&format!("({}) {}, ", quantity, item.name));
-            }
-        }
-
-        // Remove the last ", " from loot_message if there are any items looted
-        if !loot_message.is_empty() {
-            loot_message.pop();
-            loot_message.pop();
-        }
-    }
-
-    // Display the detailed combat results immediately
-    println!("[Combat Results]");
-    println!("+{} XP", xp_gain);
-    if !loot_message.is_empty() {
-        println!("Looted: {}", loot_message);
-    } else {
-        println!("No items were looted.");
-    }
-
-    println!("\nPress Enter to continue...");
-    io::stdin().read_line(&mut String::new()).unwrap(); // Pause to allow the user to read loot and XP
-
-    // Return a summary message for recent actions
-    format!("Defeated a {} | +{} XP | Looted: {}", enemy.name, xp_gain, loot_message)
-}
-
-
-fn handle_player_defeat(player: &mut Player, enemy: &Enemy) -> String {
-    // Display a message indicating the player was defeated
-    format!("You have been defeated by the {}...", enemy.name)
-}
-
-fn game_loop(mut player: Player, mut game_map: Map, quests: Vec<Quest>, save_folder: String, character_name: String) {
-    let mut recent_actions: VecDeque<String> = VecDeque::with_capacity(3);
-    let mut new_action = String::from("Welcome to the game!");
-
-    // Create loot tables for use during combat
-    let loot_tables = create_loot_tables();
-
-    loop {
-        // Get terminal height to adjust map display size
-        let view_size = if let Some((_, height)) = term_size::dimensions() {
-            if height >= 44 { // Considering the entire UI (menu, map, actions)
-                30 // 30x30 chunk
-            } else if height >= 29 {
-                20 // 20x20 chunk
-            } else {
-                10 // 10x10 chunk
-            }
-        } else {
-            30 // Default to 30 if unable to detect terminal size
+            0
         };
 
-        // Update the game map view radius based on view size
-        game_map.view_radius = view_size / 2;
+        // Prepare menu lines
+        let mut menu_lines = Vec::new();
+        menu_lines.push("(w/a/s/d) move | (status) player status | (quests) view quests");
+        menu_lines.push("(i) inventory | (m) menu | (q) quit");
 
-        // Clear the terminal using ANSI escape codes
-        print!("\x1B[2J\x1B[1;1H");
-        io::stdout().flush().unwrap();
+        // Prepare recent actions lines
+        let mut info_lines = Vec::new();
 
-        // Render the top menu
-        println!("(w/a/s/d) move | (status) player status | (quests) view quests");
-        println!("(i) inventory | (m) menu | (q) quit\n");
-
-        // Render the current chunk of the map based on view size
-        println!("{}", game_map.render());
-
-        // Display recent actions if not in combat
+        // If not in combat, add recent actions
         if !player.in_combat {
-            println!("\nRecent Actions:");
-            for action in &recent_actions {
-                println!("{}", action);
+            info_lines.push("Recent Actions:");
+            // Get the last `max_recent_actions` actions
+            let actions_to_display: Vec<&String> = recent_actions.iter().rev().take(max_recent_actions).collect();
+            // Add recent actions in original order
+            for action in actions_to_display.iter().rev() {
+                info_lines.push(action);
             }
-
-            // Ensure exactly 3 lines are always displayed for recent actions
-            for _ in recent_actions.len()..3 {
-                println!("----------");
+            // Pad with "----------" to ensure exactly `max_recent_actions` lines
+            for _ in actions_to_display.len()..max_recent_actions {
+                info_lines.push("----------");
             }
+        }
 
+        // Determine the maximum number of lines between map and info
+        let max_lines = map_lines.len().max(info_lines.len());
+
+        // Calculate the width of the map for alignment
+        let map_width = map_lines.iter().map(|line| line.len()).max().unwrap_or(0);
+
+        // Print the menu at the top
+        for menu_line in &menu_lines {
+            println!("{}", menu_line);
+        }
+        println!(); // Blank line for spacing
+
+        // Iterate through each line index and print map and recent actions side by side
+        for i in 0..max_lines {
+            let map_part = if i < map_lines.len() {
+                map_lines[i]
+            } else {
+                ""
+            };
+            let info_part = if i < info_lines.len() {
+                info_lines[i]
+            } else {
+                ""
+            };
+            println!("{:<width$}{}{}", map_part, SEPARATOR, info_part, width = map_width);
+        }
+
+        // Print the prompt below the map and recent actions
+        if !player.in_combat {
             println!("\nWhat would you like to do?...");
         }
 
         let mut input = String::new();
-        io::stdin().read_line(&mut input).expect("Failed to read line");
+        io::stdin()
+            .read_line(&mut input)
+            .expect("Failed to read line");
         let input = input.trim();
+
+        if input == "faf" && !player.in_combat {
+            println!("Initiating automatic movement...");
+            if faf(&mut player, &mut game_map) {
+                // Enemy encountered during automatic movement
+                new_action = "Enemy encountered during automatic movement.".to_string();
+                recent_actions.push_back(new_action.clone());
+
+                // Proceed to handle combat
+                let mut rng = rand::thread_rng();
+                let enemies = basic_enemies();
+                let enemy = enemies[rng.gen_range(0..enemies.len())].clone();
+                let loot_tables = create_loot_tables();
+
+                let combat_result = handle_combat(&mut player, enemy, &loot_tables);
+                println!("{}", combat_result);
+                player.in_combat = false;
+
+                if player.health <= 0 {
+                    println!("You have been defeated!");
+                    println!("Press Enter to respawn...");
+                    let _ = io::stdin().read_line(&mut String::new());
+                    player.respawn(&mut game_map);
+                    new_action = "Player has respawned.".to_string();
+                }
+            } else {
+                new_action = "Automatic movement completed.".to_string();
+                recent_actions.push_back(new_action.clone());
+            }
+            continue;
+        }
 
         match input {
             "q" => {
@@ -491,7 +583,7 @@ fn game_loop(mut player: Player, mut game_map: Map, quests: Vec<Quest>, save_fol
                 break; // Exit game
             }
             "w" | "s" | "a" | "d" => {
-                if !player.in_combat {
+                if (!player.in_combat) {
                     let direction = match input {
                         "w" => Direction::Up,
                         "s" => Direction::Down,
@@ -499,78 +591,83 @@ fn game_loop(mut player: Player, mut game_map: Map, quests: Vec<Quest>, save_fol
                         "d" => Direction::Right,
                         _ => unreachable!(),
                     };
-
-                    // Use reference to direction for movement
+                    player.facing = direction; // Update facing direction
                     game_map.move_player(&direction);
                     new_action = format!("Player moved {:?}", direction);
 
                     // Random enemy encounter logic
-                    let mut rng = rand::thread_rng();
-                    if rng.gen_range(0..100) < 20 {  // 20% chance to encounter an enemy
+                    if should_encounter_enemy(1) {
+                        // 1% chance
+                        // Enemy encounter logic
+                        let mut rng = rand::thread_rng();
                         let enemies = basic_enemies();
                         let enemy = enemies[rng.gen_range(0..enemies.len())].clone();
-                        new_action = handle_combat(&mut player, enemy, &loot_tables); // Pass loot_tables here
+                        let loot_tables = create_loot_tables();
+                        player.in_combat = true; // Set in_combat to true before starting combat
+
+                        let combat_result = handle_combat(&mut player, enemy, &loot_tables);
+                        println!("{}", combat_result);
+
                         player.in_combat = false; // Set in_combat to false after combat ends
+
+                        // After combat ends, check if player is dead
+                        if player.health <= 0 {
+                            println!("You have been defeated!");
+                            println!("Press Enter to respawn...");
+                            let _ = io::stdin().read_line(&mut String::new());
+                            player.respawn(&mut game_map);
+                            new_action = "Player has respawned.".to_string();
+                        }
                     }
                 }
             }
-            // Existing options for viewing status, inventory, quests, etc.
+            "status" => {
+                println!("{}", player.display_status());
+                println!("\nPress Enter to continue...");
+                let _ = io::stdin().read_line(&mut String::new());
+                new_action = "Viewed player status.".to_string();
+            }
+            "i" => {
+                display_and_handle_inventory(&mut player, None);
+                new_action = "Viewed inventory.".to_string();
+                continue;
+            }
+            "m" => {
+                // Handle menu
+                println!("Menu is under construction.");
+                println!("\nPress Enter to continue...");
+                let _ = io::stdin().read_line(&mut String::new());
+                new_action = "Opened menu.".to_string();
+            }
             _ => {
-                new_action = match input {
-                    "status" => {
-                        println!("\n[Status Information]");
-                        println!("Total Level: {}", player.level);
-                        println!("HP: {}/{}", player.health, player.max_health); // Show max health
-
-                        if let Some(active_quest) = player.active_quest.as_ref() {
-                            println!("Tracking: {}", active_quest.name);
-                        } else {
-                            println!("No active quest.");
-                        }
-                        println!("\nPress Enter to continue...");
-                        io::stdin().read_line(&mut String::new()).unwrap();
-                        "Player status viewed".to_string()
-                    }
-                    "quests" => {
-                        if quests.is_empty() {
-                            println!("There are no active quests.");
-                        } else {
-                            println!("Active Quests:");
-                            for quest in &quests {
-                                println!("- {}: {}", quest.name, if quest.is_completed() { "Completed" } else { &quest.description });
-                            }
-                        }
-                        println!("\nPress Enter to continue...");
-                        io::stdin().read_line(&mut String::new()).unwrap();
-                        "Viewed active quests.".to_string()
-                    }
-                    "i" => {
-                        println!("\n[Inventory]");
-                        if player.inventory.is_empty() {
-                            println!("Inventory is empty.");
-                        } else {
-                            let items = create_items();
-                            for (item_id, quantity) in &player.inventory {
-                                if let Some(item) = items.get(item_id) {
-                                    println!("- {} (Quantity: {})", item.name, quantity);
-                                }
-                            }
-                        }
-                        println!("\nPress Enter to continue...");
-                        io::stdin().read_line(&mut String::new()).unwrap();
-                        "Viewed inventory.".to_string()
-                    }
-                    _ => "Invalid command.".to_string(),
-                };
+                new_action = "Invalid command.".to_string();
+                println!("Invalid command. Please try again.");
+                println!("\nPress Enter to continue...");
+                let _ = io::stdin().read_line(&mut String::new());
             }
         }
 
         // Add the new action to the recent actions queue if not in combat
         if !player.in_combat {
-            if recent_actions.len() == 3 {
-                recent_actions.pop_front(); // Remove the oldest action if at capacity
+            if recent_actions.len() == max_recent_actions {
+                recent_actions.pop_front();
             }
-            recent_actions.push_back(new_action.clone());
+            recent_actions.push_back(new_action.clone()); // Clone new_action here to keep the original value intact
+        }
+
+        // Check if player is dead and respawn if necessary
+        if player.health <= 0 && !player.in_combat {
+            // This block can be removed since respawn is handled after combat ends
+            // Keeping it here as a fallback
+            player.respawn(&mut game_map);
+            new_action = "Player has respawned.".to_string();
         }
     }
+}
+
+// Ensure skills are initialized when creating a new player
+fn create_new_player() -> Player {
+    let mut player = Player::new();
+    player.skills = initialize_skills();
+    player
 }
