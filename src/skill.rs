@@ -5,7 +5,7 @@ use std::collections::HashMap;
 pub struct Skill {
     pub name: String,
     pub level: i32,
-    pub experience: f32,
+    pub experience: f64,
 }
 
 impl Skill {
@@ -17,12 +17,12 @@ impl Skill {
         }
     }
 
-    pub fn add_experience(&mut self, amount: f32) {
+    pub fn add_experience(&mut self, amount: f64) {
         self.experience += amount;
         if self.experience > 200_000_000.0 {
             self.experience = 200_000_000.0;
         }
-        while self.experience >= xp_for_level(self.level + 1) && self.level < 99 {
+        while self.experience >= xp_for_level((self.level + 1) as u32) && self.level < 99 {
             self.level += 1;
             println!("Skill leveled up: {} is now level {}", self.name, self.level);
         }
@@ -38,25 +38,15 @@ impl Skill {
     }
 }
 
-fn xp_for_level(level: i32) -> f32 {
-    match level {
-        2 => 83.0,
-        3 => 174.0,
-        4 => 276.0,
-        5 => 388.0,
-        6 => 512.0,
-        // Add more levels as needed
-        99 => 13_034_431.0,
-        150 => 2_033_749_558.0,
-        200 => 287_416_243_706.0,
-        250 => 40_618_656_793_231.0,
-        300 => 5_740_369_026_216_700.0,
-        _ => {
-            // Implement formula for levels beyond provided values
-            // For now, return a large number to prevent leveling
-            f32::MAX
-        }
+fn xp_for_level(level: u32) -> f64 {
+    let mut xp = 0.0;
+
+    for i in 1..level {
+        let value = (i as f64) + (300.0 * 2f64.powf(i as f64 / 7.0));
+        xp += value.floor() / 4.0;
     }
+
+    xp
 }
 
 // Initialize default skills for the player based on the given categories

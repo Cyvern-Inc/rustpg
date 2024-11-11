@@ -4,16 +4,11 @@ use crate::skill::{combat_xp_calculation, AttackType};
 use crate::player::Player;
 
 // Inventory system
-use crate::inventory::{
-    display_and_handle_inventory,
-    handle_eat_command,
-};
+use crate::inventory::display_and_handle_inventory;
 
 // Item system
 use crate::items::{
     create_items,
-    Item,
-    ItemType,
     calculate_loot,
     LootTable,
 };
@@ -80,7 +75,7 @@ pub fn handle_combat(
                 // Add XP to relevant skills
                 for (skill_name, xp) in xp_gains {
                     if let Some(skill) = player.skills.get_mut(&skill_name) {
-                        skill.add_experience(xp as f32);
+                        skill.add_experience(xp as f64);
                         // Optionally, display XP gains to the player
                         // println!("{} gained {} XP.", skill_name, xp);
                     }
@@ -125,7 +120,7 @@ pub fn handle_combat(
                         let xp_gains = combat_xp_calculation(&attack_counts);
                         for (skill_name, xp) in xp_gains {
                             if let Some(skill) = player.skills.get_mut(&skill_name) {
-                                skill.add_experience(xp as f32);
+                                skill.add_experience(xp as f64);
                                 // Optionally, display XP gains to the player
                                 // println!("{} gained {} XP.", skill_name, xp);
                             }
@@ -170,7 +165,7 @@ pub fn handle_combat(
                         let xp_gains = combat_xp_calculation(&attack_counts);
                         for (skill_name, xp) in xp_gains {
                             if let Some(skill) = player.skills.get_mut(&skill_name) {
-                                skill.add_experience(xp as f32);
+                                skill.add_experience(xp as f64);
                                 // Optionally, display XP gains to the player
                                 // println!("{} gained {} XP.", skill_name, xp);
                             }

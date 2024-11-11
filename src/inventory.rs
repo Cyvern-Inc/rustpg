@@ -1,8 +1,6 @@
 use crate::items::{create_items, Item, ItemType};
 use crate::player::Player;
-use std::collections::HashMap;
 use std::io::{self, Write};
-use term_size;
 
 pub fn display_inventory(player: &mut Player, filter_type: Option<ItemType>) -> Option<String> {
     loop {

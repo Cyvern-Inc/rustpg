@@ -9,13 +9,13 @@ mod skill;
 mod utils;
 
 use crate::combat::handle_combat;
-use crate::inventory::{display_and_handle_inventory, display_inventory, handle_eat_command};
-use crate::items::{create_items, create_loot_tables, get_starting_items, ItemType};
+use crate::inventory::display_and_handle_inventory;
+use crate::items::create_loot_tables;
 use crate::map::Tile;
 use crate::player::Player;
 use crate::quest::{sample_quests, starting_quest, Quest};
-use crate::skill::Skill;
-use crate::utils::{should_encounter_enemy, faf};
+use crate::utils::{faf, should_encounter_enemy};
+use chrono::{DateTime, Local};
 use enemy::basic_enemies;
 use map::{Direction, Map};
 use rand::Rng;
@@ -23,15 +23,11 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use skill::initialize_skills;
-use std::collections::HashMap;
 use std::collections::VecDeque;
-use std::env;
-use std::fs::{self, copy, create_dir_all, remove_dir_all};
+use std::fs::{self, create_dir_all};
 use std::io::{self, Write};
-use std::panic;
 use std::path::{Path, PathBuf};
 use term_size;
-use chrono::{DateTime, Local};
 
 #[derive(Serialize, Deserialize, Clone)]
 struct CharacterSave {
@@ -50,15 +46,15 @@ struct CharacterSave {
     inventory: std::collections::HashMap<u32, u32>,
 }
 
-// =========================
-// Game Initialization
-// =========================
+// ====================//
+// Game Initialization //
+// ====================//
 
 fn main() {
     let version = option_env!("VERSION").unwrap_or("unknown version");
     let build_number = option_env!("BUILD_NUMBER").unwrap_or("unknown build");
     let saves_path = Path::new("Saves");
-    if (!saves_path.exists()) {
+    if !saves_path.exists() {
         fs::create_dir(saves_path).expect("Failed to create Saves folder");
     }
 
@@ -128,7 +124,12 @@ fn new_game() {
         } else if character_name == "b" {
             break;
         }
-        if character_name.is_empty() || character_name.len() > 32 || !character_name.chars().all(|c| c.is_alphanumeric() || c.is_whitespace()) {
+        if character_name.is_empty()
+            || character_name.len() > 32
+            || !character_name
+                .chars()
+                .all(|c| c.is_alphanumeric() || c.is_whitespace())
+        {
             println!("Invalid name. Please enter a valid name.");
             println!("\nPress Enter to continue...");
             let _ = io::stdin().read_line(&mut String::new());
@@ -361,38 +362,42 @@ fn load_game(save_folder: &Path) {
         &fs::read_to_string(&character_file_path).expect("Failed to read character file"),
     )
     .expect("Failed to parse character file");
-    
+
     // Deserialize the map data with player coordinates
     let map_file_path = save_folder.join("map.txt");
     let map_data_str = fs::read_to_string(&map_file_path).expect("Failed to read map file");
-    
+
     // Ensure that `player_x` and `player_y` are correctly retrieved from `character_data`
     let mut map_data = Map::deserialize_map(
-        character_data.game_map.width, 
-        character_data.game_map.height, 
-        &map_data_str, 
-        character_data.player_x, 
-        character_data.player_y
+        character_data.game_map.width,
+        character_data.game_map.height,
+        &map_data_str,
+        character_data.player_x,
+        character_data.player_y,
     );
-    
+
     // Initialize the player and set their position
     let mut player = Player::new();
     player.set_position(character_data.player_x, character_data.player_y);
-    
+
     // Clear any existing player positions to avoid duplicates
     map_data.clear_player_positions();
-    
+
     // Set the player's position on the map
-    map_data.set_tile(character_data.player_x, character_data.player_y, Tile::Player);
+    map_data.set_tile(
+        character_data.player_x,
+        character_data.player_y,
+        Tile::Player,
+    );
 
     println!(
         "Loaded Player Position: ({}, {})",
         character_data.player_x, character_data.player_y
     );
-    
+
     // Load quests and other data as needed
     let quests = sample_quests();
-    
+
     // Start the game loop with the updated player and map
     game_loop(
         player,
@@ -416,7 +421,7 @@ fn save_game(player: &Player, game_map: &Map, save_folder: &Path, character_name
         skills: player
             .skills
             .iter()
-            .map(|(name, skill)| (name.clone(), skill.level, skill.experience))
+            .map(|(name, skill)| (name.clone(), skill.level, skill.experience as f32))
             .collect(),
         player_x: game_map.player_x,
         player_y: game_map.player_y,
@@ -443,7 +448,7 @@ fn game_loop(
     save_folder: PathBuf,
     character_name: String,
 ) {
-    let mut recent_actions: VecDeque<String> = VecDeque::with_capacity(3);
+    let mut recent_actions: VecDeque<String> = VecDeque::new();
     let mut new_action: String = String::new();
 
     // Determine view size based on terminal height
@@ -465,24 +470,73 @@ fn game_loop(
         print!("\x1B[2J\x1B[1;1H");
         io::stdout().flush().unwrap();
 
-        // Render the top menu
-        println!("(w/a/s/d) move | (status) player status | (quests) view quests");
-        println!("(i) inventory | (m) menu | (q) quit");
-        println!();
-        
-        // Render the viewport
-        println!("{}", game_map.render());
+        // Define a separator between map and info
+        const SEPARATOR: &str = "    "; // 4 spaces
 
-        // Display recent actions if not in combat
-        if (!player.in_combat) {
-            println!("\nRecent Actions:");
-            for action in &recent_actions {
-                println!("{}", action);
+        // Render the viewport
+        let map_str = game_map.render();
+        let map_lines: Vec<&str> = map_str.lines().collect();
+        let map_height = map_lines.len();
+
+        // Calculate the maximum number of recent actions based on map height
+        let max_recent_actions = if map_height > 1 {
+            map_height - 1
+        } else {
+            0
+        };
+
+        // Prepare menu lines
+        let mut menu_lines = Vec::new();
+        menu_lines.push("(w/a/s/d) move | (status) player status | (quests) view quests");
+        menu_lines.push("(i) inventory | (m) menu | (q) quit");
+
+        // Prepare recent actions lines
+        let mut info_lines = Vec::new();
+
+        // If not in combat, add recent actions
+        if !player.in_combat {
+            info_lines.push("Recent Actions:");
+            // Get the last `max_recent_actions` actions
+            let actions_to_display: Vec<&String> = recent_actions.iter().rev().take(max_recent_actions).collect();
+            // Add recent actions in original order
+            for action in actions_to_display.iter().rev() {
+                info_lines.push(action);
             }
-            // Ensure exactly 3 lines are always displayed for recent actions
-            for _ in recent_actions.len()..3 {
-                println!("----------");
+            // Pad with "----------" to ensure exactly `max_recent_actions` lines
+            for _ in actions_to_display.len()..max_recent_actions {
+                info_lines.push("----------");
             }
+        }
+
+        // Determine the maximum number of lines between map and info
+        let max_lines = map_lines.len().max(info_lines.len());
+
+        // Calculate the width of the map for alignment
+        let map_width = map_lines.iter().map(|line| line.len()).max().unwrap_or(0);
+
+        // Print the menu at the top
+        for menu_line in &menu_lines {
+            println!("{}", menu_line);
+        }
+        println!(); // Blank line for spacing
+
+        // Iterate through each line index and print map and recent actions side by side
+        for i in 0..max_lines {
+            let map_part = if i < map_lines.len() {
+                map_lines[i]
+            } else {
+                ""
+            };
+            let info_part = if i < info_lines.len() {
+                info_lines[i]
+            } else {
+                ""
+            };
+            println!("{:<width$}{}{}", map_part, SEPARATOR, info_part, width = map_width);
+        }
+
+        // Print the prompt below the map and recent actions
+        if !player.in_combat {
             println!("\nWhat would you like to do?...");
         }
 
@@ -542,7 +596,8 @@ fn game_loop(
                     new_action = format!("Player moved {:?}", direction);
 
                     // Random enemy encounter logic
-                    if should_encounter_enemy(1) { // 1% chance
+                    if should_encounter_enemy(1) {
+                        // 1% chance
                         // Enemy encounter logic
                         let mut rng = rand::thread_rng();
                         let enemies = basic_enemies();
@@ -556,7 +611,7 @@ fn game_loop(
                         player.in_combat = false; // Set in_combat to false after combat ends
 
                         // After combat ends, check if player is dead
-                        if (player.health <= 0) {
+                        if player.health <= 0 {
                             println!("You have been defeated!");
                             println!("Press Enter to respawn...");
                             let _ = io::stdin().read_line(&mut String::new());
@@ -574,8 +629,8 @@ fn game_loop(
             }
             "i" => {
                 display_and_handle_inventory(&mut player, None);
-                continue;
                 new_action = "Viewed inventory.".to_string();
+                continue;
             }
             "m" => {
                 // Handle menu
@@ -593,15 +648,15 @@ fn game_loop(
         }
 
         // Add the new action to the recent actions queue if not in combat
-        if (!player.in_combat) {
-            if (recent_actions.len() == 3) {
-                recent_actions.pop_front(); // Remove the oldest action if at capacity
+        if !player.in_combat {
+            if recent_actions.len() == max_recent_actions {
+                recent_actions.pop_front();
             }
             recent_actions.push_back(new_action.clone()); // Clone new_action here to keep the original value intact
         }
 
         // Check if player is dead and respawn if necessary
-        if (player.health <= 0 && !player.in_combat) {
+        if player.health <= 0 && !player.in_combat {
             // This block can be removed since respawn is handled after combat ends
             // Keeping it here as a fallback
             player.respawn(&mut game_map);

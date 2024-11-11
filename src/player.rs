@@ -6,6 +6,7 @@ use crate::quest::Quest;
 use crate::items::{Item, ItemType};
 use crate::items::create_items;
 use crate::map::{Map, Direction};
+use std::io::{self, Write};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct Player {
@@ -101,15 +102,68 @@ impl Player {
     }
 
     pub fn display_status(&self) -> String {
-        let mut status = format!(
-            "Health: {}/{}\nLevel: {}\nExperience: {}\nInventory:\n",
-            self.health, self.max_health, self.level, self.experience
-        );
+        let mut status = String::new();
+
+        // Clear the terminal
+        print!("\x1B[2J\x1B[1;1H");
+        io::stdout().flush().unwrap();
+
+        // Render the top menu
+        println!("(w/a/s/d) move | (status) player status | (quests) view quests");
+        println!("(i) inventory | (m) menu | (q) quit");
+        println!();
+
+        // Left Column: Health, Level, Experience
+        let left_column = vec![
+            format!("Health:    {}/{}", self.health, self.max_health),
+            format!("Level:     {}", self.level),
+            format!("Experience: {}", self.experience),
+            String::from("Skills:"),
+        ];
+
+        // Skills Lines
+        let mut skills_lines: Vec<String> = Vec::new();
+        for (skill_name, skill) in &self.skills {
+            skills_lines.push(format!(
+                "- {}: Level {} (XP: {})",
+                skill_name, skill.level, skill.experience
+            ));
+        }
+
+        // Combine Health, Level, Experience with Skills
+        let mut left_combined = left_column.clone();
+        left_combined.extend(skills_lines);
+
+        // Right Column: Inventory
+        let mut right_combined = vec![String::from("Inventory:")];
         for (item_id, quantity) in &self.inventory {
             if let Some(item) = create_items().get(item_id) {
-                status.push_str(&format!("  - {} x{}\n", item.name, quantity));
+                right_combined.push(format!("- {} x{}", item.name, quantity));
             }
         }
+
+        // Determine the maximum number of lines between left and right
+        let max_lines = left_combined.len().max(right_combined.len());
+
+        // Iterate and combine lines side by side
+        for i in 0..max_lines {
+            let left = if i < left_combined.len() {
+                &left_combined[i]
+            } else {
+                ""
+            };
+
+            let right = if i < right_combined.len() {
+                &right_combined[i]
+            } else {
+                ""
+            };
+
+            // Define the width for the left column to ensure proper spacing
+            // Adjust the width as needed based on the longest line in the left column
+            status.push_str(&format!("{:<40} {}\n", left, right));
+        }
+
         status
     }
 
@@ -120,7 +174,7 @@ impl Player {
     // Train a skill by adding experience to it
     pub fn train_skill(&mut self, skill_name: &str, xp_gain: f32) {
         if let Some(skill) = self.skills.get_mut(skill_name) {
-            skill.add_experience(xp_gain);
+            skill.add_experience(xp_gain as f64);
             skill.display_skill_info();
         } else {
             println!("Skill not found: {}", skill_name);
@@ -201,7 +255,7 @@ impl Player {
 
     pub fn add_experience_to_skill(&mut self, skill_name: &str, amount: f32) {
         if let Some(skill) = self.skills.get_mut(skill_name) {
-            skill.add_experience(amount);
+            skill.add_experience(amount as f64);
             println!("{} gained {} XP.", skill_name, amount);
         } else {
             println!("Skill not found: {}", skill_name);
