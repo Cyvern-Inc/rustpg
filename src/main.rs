@@ -11,9 +11,11 @@ mod utils;
 use crate::combat::handle_combat;
 use crate::inventory::display_and_handle_inventory;
 use crate::items::create_loot_tables;
+use crate::items::{EquipmentSlot, Item};
 use crate::map::Tile;
 use crate::player::Player;
 use crate::quest::{sample_quests, starting_quest, Quest};
+use crate::skill::Skill;
 use crate::utils::{faf, should_encounter_enemy};
 use chrono::{DateTime, Local};
 use enemy::basic_enemies;
@@ -23,6 +25,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json;
 use skill::initialize_skills;
+use std::collections::HashMap;
 use std::collections::VecDeque;
 use std::fs::{self, create_dir_all};
 use std::io::{self, Write};
@@ -43,7 +46,48 @@ struct CharacterSave {
     player_x: usize,
     player_y: usize,
     current_map: String,
-    inventory: std::collections::HashMap<u32, u32>,
+    inventory: HashMap<u32, u32>,
+    #[serde(default)]
+    equipped_items: HashMap<EquipmentSlot, Item>,
+}
+
+fn add_to_recent_actions(
+    recent_actions: &mut VecDeque<String>,
+    new_action: String,
+    max_recent_actions: usize,
+) {
+    if new_action.is_empty() {
+        return;
+    }
+
+    // Check if there's a previous action
+    if let Some(last_action) = recent_actions.back_mut() {
+        // Split last action into base message and count
+        let (base_msg, current_count) =
+            if let Some((msg, count)) = last_action.split(" x").collect::<Vec<_>>().split_first() {
+                (
+                    msg.to_string(),
+                    count
+                        .first()
+                        .and_then(|n| n.parse::<usize>().ok())
+                        .unwrap_or(1),
+                )
+            } else {
+                (last_action.clone(), 1)
+            };
+
+        // If new action matches base message, update count
+        if new_action == base_msg {
+            *last_action = format!("{} x{}", base_msg, current_count + 1);
+            return;
+        }
+    }
+
+    // If we get here, it's a new unique message
+    if recent_actions.len() >= max_recent_actions {
+        recent_actions.pop_front();
+    }
+    recent_actions.push_back(new_action);
 }
 
 // ====================//
@@ -216,13 +260,10 @@ fn load_save_menu() -> Option<PathBuf> {
         let metadata = fs::metadata(entry.path()).unwrap();
         let modified: DateTime<Local> = DateTime::from(metadata.modified().unwrap());
 
-        let level = get_player_level(&entry.path()).unwrap_or(1);
-
         println!(
-            "{}. {} | lvl {} | {}",
+            "{}. {} | {}",
             i + 1,
             save_name,
-            level,
             modified.format("%b, %d %Y")
         );
     }
@@ -335,12 +376,6 @@ fn load_save_menu() -> Option<PathBuf> {
     load_save_menu()
 }
 
-fn get_player_level(save_path: &Path) -> Option<u32> {
-    // This function would load save data and return the player's level
-    // Placeholder for now - real implementation needed
-    Some(1) // Example: default level 1
-}
-
 fn copy_save_folder(from: &Path, to: &Path) -> io::Result<()> {
     for entry in fs::read_dir(from)? {
         let entry = entry?;
@@ -356,18 +391,17 @@ fn copy_save_folder(from: &Path, to: &Path) -> io::Result<()> {
 }
 
 fn load_game(save_folder: &Path) {
-    // Deserialize the saved character data
+    // Read character data
     let character_file_path = save_folder.join("character.json");
     let character_data: CharacterSave = serde_json::from_str(
         &fs::read_to_string(&character_file_path).expect("Failed to read character file"),
     )
     .expect("Failed to parse character file");
 
-    // Deserialize the map data with player coordinates
+    // Read map data
     let map_file_path = save_folder.join("map.txt");
     let map_data_str = fs::read_to_string(&map_file_path).expect("Failed to read map file");
 
-    // Ensure that `player_x` and `player_y` are correctly retrieved from `character_data`
     let mut map_data = Map::deserialize_map(
         character_data.game_map.width,
         character_data.game_map.height,
@@ -376,29 +410,34 @@ fn load_game(save_folder: &Path) {
         character_data.player_y,
     );
 
-    // Initialize the player and set their position
+    // Initialize player
     let mut player = Player::new();
     player.set_position(character_data.player_x, character_data.player_y);
+    player.inventory = character_data.inventory;
+    player.equipped_items = character_data.equipped_items;
 
-    // Clear any existing player positions to avoid duplicates
+    // Convert skills Vec to HashMap
+    let mut skills = HashMap::new();
+    for (name, level, exp) in character_data.skills {
+        let mut skill = Skill::new(&name, level);
+        skill.experience = exp as f64;
+        skills.insert(name, skill);
+    }
+    player.skills = skills;
+
+    // Update total level
+    player.update_total_level();
+
+    // Get quests
+    let quests = sample_quests();
+
     map_data.clear_player_positions();
-
-    // Set the player's position on the map
     map_data.set_tile(
         character_data.player_x,
         character_data.player_y,
         Tile::Player,
     );
 
-    println!(
-        "Loaded Player Position: ({}, {})",
-        character_data.player_x, character_data.player_y
-    );
-
-    // Load quests and other data as needed
-    let quests = sample_quests();
-
-    // Start the game loop with the updated player and map
     game_loop(
         player,
         map_data,
@@ -427,12 +466,13 @@ fn save_game(player: &Player, game_map: &Map, save_folder: &Path, character_name
         player_y: game_map.player_y,
         current_map: save_folder.join("map.txt").to_string_lossy().into_owned(),
         inventory: player.inventory.clone(),
+        equipped_items: player.equipped_items.clone(),
     };
 
     let character_save_path = save_folder.join("character.json");
     fs::write(
         &character_save_path,
-        serde_json::to_string(&character_save).unwrap(),
+        serde_json::to_string_pretty(&character_save).unwrap(),
     )
     .expect("Failed to write character file");
 
@@ -444,7 +484,7 @@ fn save_game(player: &Player, game_map: &Map, save_folder: &Path, character_name
 fn game_loop(
     mut player: Player,
     mut game_map: Map,
-    quests: Vec<Quest>,
+    _quests: Vec<Quest>,
     save_folder: PathBuf,
     character_name: String,
 ) {
@@ -453,9 +493,9 @@ fn game_loop(
 
     // Determine view size based on terminal height
     let view_size = if let Some((_, height)) = term_size::dimensions() {
-        if (height >= 44) {
+        if height >= 44 {
             30
-        } else if (height >= 29) {
+        } else if height >= 29 {
             20
         } else {
             10
@@ -479,11 +519,7 @@ fn game_loop(
         let map_height = map_lines.len();
 
         // Calculate the maximum number of recent actions based on map height
-        let max_recent_actions = if map_height > 1 {
-            map_height - 1
-        } else {
-            0
-        };
+        let max_recent_actions = if map_height > 1 { map_height - 1 } else { 0 };
 
         // Prepare menu lines
         let mut menu_lines = Vec::new();
@@ -497,7 +533,11 @@ fn game_loop(
         if !player.in_combat {
             info_lines.push("Recent Actions:");
             // Get the last `max_recent_actions` actions
-            let actions_to_display: Vec<&String> = recent_actions.iter().rev().take(max_recent_actions).collect();
+            let actions_to_display: Vec<&String> = recent_actions
+                .iter()
+                .rev()
+                .take(max_recent_actions)
+                .collect();
             // Add recent actions in original order
             for action in actions_to_display.iter().rev() {
                 info_lines.push(action);
@@ -532,7 +572,13 @@ fn game_loop(
             } else {
                 ""
             };
-            println!("{:<width$}{}{}", map_part, SEPARATOR, info_part, width = map_width);
+            println!(
+                "{:<width$}{}{}",
+                map_part,
+                SEPARATOR,
+                info_part,
+                width = map_width
+            );
         }
 
         // Print the prompt below the map and recent actions
@@ -551,7 +597,7 @@ fn game_loop(
             if faf(&mut player, &mut game_map) {
                 // Enemy encountered during automatic movement
                 new_action = "Enemy encountered during automatic movement.".to_string();
-                recent_actions.push_back(new_action.clone());
+                add_to_recent_actions(&mut recent_actions, new_action.clone(), max_recent_actions);
 
                 // Proceed to handle combat
                 let mut rng = rand::thread_rng();
@@ -561,6 +607,48 @@ fn game_loop(
 
                 let combat_result = handle_combat(&mut player, enemy, &loot_tables);
                 println!("{}", combat_result);
+
+                // Add combat result to recent actions
+                if combat_result.contains("Defeated a") {
+                    new_action = combat_result.clone();
+                } else {
+                    new_action = "Enemy encountered during automatic movement.".to_string();
+                }
+
+                // Check quest progress
+                if let Some(defeated_enemy_name) = combat_result.contains("Defeated a").then(|| {
+                    combat_result
+                        .split("Defeated a ")
+                        .nth(1)
+                        .unwrap()
+                        .split(" |")
+                        .next()
+                        .unwrap()
+                }) {
+                    for quest in player.quests.iter_mut() {
+                        if quest.check_progress(Some(defeated_enemy_name)) {
+                            new_action = format!("Quest '{}' completed!", quest.name);
+                        }
+                    }
+                }
+
+                // Handle consecutive message counting
+                if let Some(last_action) = recent_actions.back() {
+                    if last_action.split(" x").next().unwrap() == new_action {
+                        // Extract current count or default to 2
+                        let count = last_action
+                            .split(" x")
+                            .nth(1)
+                            .and_then(|n| n.parse::<usize>().ok())
+                            .unwrap_or(1)
+                            + 1;
+                        recent_actions.pop_back();
+                        new_action = format!("{} x{}", new_action, count);
+                    }
+                }
+
+                add_to_recent_actions(&mut recent_actions, new_action.clone(), max_recent_actions);
+
                 player.in_combat = false;
 
                 if player.health <= 0 {
@@ -572,7 +660,7 @@ fn game_loop(
                 }
             } else {
                 new_action = "Automatic movement completed.".to_string();
-                recent_actions.push_back(new_action.clone());
+                add_to_recent_actions(&mut recent_actions, new_action.clone(), max_recent_actions);
             }
             continue;
         }
@@ -583,7 +671,7 @@ fn game_loop(
                 break; // Exit game
             }
             "w" | "s" | "a" | "d" => {
-                if (!player.in_combat) {
+                if !player.in_combat {
                     let direction = match input {
                         "w" => Direction::Up,
                         "s" => Direction::Down,
@@ -596,7 +684,8 @@ fn game_loop(
                     new_action = format!("Player moved {:?}", direction);
 
                     // Random enemy encounter logic
-                    if should_encounter_enemy(1) {
+                    if should_encounter_enemy(&game_map, 1) {
+                        // 1% chance
                         // 1% chance
                         // Enemy encounter logic
                         let mut rng = rand::thread_rng();
@@ -607,6 +696,53 @@ fn game_loop(
 
                         let combat_result = handle_combat(&mut player, enemy, &loot_tables);
                         println!("{}", combat_result);
+
+                        // Add combat result to recent actions
+                        if combat_result.contains("Defeated a") {
+                            new_action = combat_result.clone();
+                        } else {
+                            new_action = "Enemy encountered during automatic movement.".to_string();
+                        }
+
+                        // Check quest progress
+                        if let Some(defeated_enemy_name) =
+                            combat_result.contains("Defeated a").then(|| {
+                                combat_result
+                                    .split("Defeated a ")
+                                    .nth(1)
+                                    .unwrap()
+                                    .split(" |")
+                                    .next()
+                                    .unwrap()
+                            })
+                        {
+                            for quest in player.quests.iter_mut() {
+                                if quest.check_progress(Some(defeated_enemy_name)) {
+                                    new_action = format!("Quest '{}' completed!", quest.name);
+                                }
+                            }
+                        }
+
+                        // Handle consecutive message counting
+                        if let Some(last_action) = recent_actions.back() {
+                            if last_action.split(" x").next().unwrap() == new_action {
+                                // Extract current count or default to 2
+                                let count = last_action
+                                    .split(" x")
+                                    .nth(1)
+                                    .and_then(|n| n.parse::<usize>().ok())
+                                    .unwrap_or(1)
+                                    + 1;
+                                recent_actions.pop_back();
+                                new_action = format!("{} x{}", new_action, count);
+                            }
+                        }
+
+                        add_to_recent_actions(
+                            &mut recent_actions,
+                            new_action.clone(),
+                            max_recent_actions,
+                        );
 
                         player.in_combat = false; // Set in_combat to false after combat ends
 
@@ -626,6 +762,12 @@ fn game_loop(
                 println!("\nPress Enter to continue...");
                 let _ = io::stdin().read_line(&mut String::new());
                 new_action = "Viewed player status.".to_string();
+            }
+            "quests" => {
+                println!("{}", player.display_quests());
+                println!("\nPress Enter to continue...");
+                let _ = io::stdin().read_line(&mut String::new());
+                continue;
             }
             "i" => {
                 display_and_handle_inventory(&mut player, None);
@@ -649,10 +791,7 @@ fn game_loop(
 
         // Add the new action to the recent actions queue if not in combat
         if !player.in_combat {
-            if recent_actions.len() == max_recent_actions {
-                recent_actions.pop_front();
-            }
-            recent_actions.push_back(new_action.clone()); // Clone new_action here to keep the original value intact
+            add_to_recent_actions(&mut recent_actions, new_action.clone(), max_recent_actions);
         }
 
         // Check if player is dead and respawn if necessary

@@ -10,6 +10,14 @@ pub fn display_inventory(player: &mut Player, filter_type: Option<ItemType>) -> 
 
         // Display inventory header
         println!("\n[Inventory - Page 1/1]");
+
+        // Display equipped items
+        println!("\nEquipped Items:");
+        for (slot, item) in &player.equipped_items {
+            println!("{:<10}: {}", format!("{:?}", slot), item.name);
+        }
+
+        println!("\nInventory Items:");
         let items = create_items(); // Create a hashmap of all game items
         let mut found = false; // Flag to check if any items are displayed
 
@@ -18,7 +26,12 @@ pub fn display_inventory(player: &mut Player, filter_type: Option<ItemType>) -> 
             if let Some(item) = items.get(item_id) {
                 // Borrow `filter_type` using `as_ref()` to prevent moving
                 if filter_type.as_ref().map_or(true, |f| item.item_type == *f) && *quantity > 0 {
-                    println!("{:<20} x{:<8}", item.name, quantity);
+                    let equipped_marker = if player.equipped_items.values().any(|i| i.id == item.id) {
+                        "*"
+                    } else {
+                        " "
+                    };
+                    println!("{}{:<20} x{:<8}", equipped_marker, item.name, quantity);
                     found = true; // Set flag if at least one item is displayed
                 }
             }
@@ -30,6 +43,8 @@ pub fn display_inventory(player: &mut Player, filter_type: Option<ItemType>) -> 
 
         // Prompt User for Action
         println!("\nOptions:");
+        println!("  equip <item_name> - Equip an item");
+        println!("  unequip <item_name> - Unequip an item");
         println!("  use <item_name> - Use an item");
         println!("  eat <item_name> - Eat a consumable item");
         println!("  q - Quit inventory");
@@ -45,6 +60,26 @@ pub fn display_inventory(player: &mut Player, filter_type: Option<ItemType>) -> 
         // Handle User Input
         match input.as_str() {
             "q" => return None, // Quit inventory
+
+            cmd if cmd.starts_with("equip ") => {
+                let item_name = cmd.trim_start_matches("equip ").trim();
+                if let Some(item) = items.values()
+                    .find(|i| i.name.eq_ignore_ascii_case(item_name)) 
+                {
+                    match player.equip_item(item) {
+                        Ok(msg) => println!("\n{}", msg),
+                        Err(e) => println!("\nError: {}", e),
+                    }
+                }
+            }
+
+            cmd if cmd.starts_with("unequip ") => {
+                let item_name = cmd.trim_start_matches("unequip ").trim();
+                match player.unequip_item(item_name) {
+                    Ok(msg) => println!("\n{}", msg),
+                    Err(e) => println!("\nError: {}", e),
+                }
+            }
 
             cmd if cmd.starts_with("use ") => {
                 let item_name = cmd.trim_start_matches("use ").trim();
@@ -138,15 +173,55 @@ pub fn display_inventory(player: &mut Player, filter_type: Option<ItemType>) -> 
 pub fn interact_with_item(player: &mut Player, item: &Item) {
     match item.item_type {
         ItemType::Consumable => interact_with_consumable(player, item),
-        ItemType::Equipment => interact_with_equipment(player, item),
-        ItemType::CraftingMaterial => println!("The {} is used in crafting.", item.name),
-        _ => println!("The {} cannot be used directly.", item.name),
+        ItemType::Weapon | ItemType::Armor => interact_with_combat_gear(player, item),
+        ItemType::Misc => println!("The {} cannot be used directly.", item.name),
+        ItemType::Currency => println!("This is currency and cannot be used directly."),
     }
     println!("Press Enter to continue...");
     let _ = io::stdin().read_line(&mut String::new());
 }
 
-fn interact_with_equipment(player: &mut Player, item: &Item) {
+fn interact_with_combat_gear(player: &mut Player, item: &Item) {
+    match item.item_type {
+        ItemType::Weapon => {
+            if let Some(current_weapon) = &player.equipped_weapon {
+                if current_weapon.id == item.id {
+                    println!("You unequip the {}.", item.name);
+                    player.equipped_weapon = None;
+                } else {
+                    println!(
+                        "You unequip the {} and equip the {}.",
+                        current_weapon.name, item.name
+                    );
+                    player.equipped_weapon = Some(item.clone());
+                }
+            } else {
+                println!("You equip the {}.", item.name);
+                player.equipped_weapon = Some(item.clone());
+            }
+        },
+        ItemType::Armor => {
+            if let Some(current_armor) = &player.equipped_armor {
+                if current_armor.id == item.id {
+                    println!("You unequip the {}.", item.name);
+                    player.equipped_armor = None;
+                } else {
+                    println!(
+                        "You unequip the {} and equip the {}.",
+                        current_armor.name, item.name
+                    );
+                    player.equipped_armor = Some(item.clone());
+                }
+            } else {
+                println!("You equip the {}.", item.name);
+                player.equipped_armor = Some(item.clone());
+            }
+        },
+        _ => println!("This item cannot be equipped."),
+    }
+}
+
+pub fn interact_with_equipment(player: &mut Player, item: &Item) {
     // Determine if item is a weapon or armor based on item properties
     if item.name.contains("Sword") || item.name.contains("Dagger") {
         // Handle equipping or unequipping weapon

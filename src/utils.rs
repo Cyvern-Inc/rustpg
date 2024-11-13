@@ -71,7 +71,7 @@ pub fn faf(player: &mut Player, game_map: &mut Map) -> bool {
         prev_direction = direction;
 
         // Check for enemy encounter
-        if should_encounter_enemy(1) { // Adjust the encounter rate as needed
+        if should_encounter_enemy(game_map, 1) { // 1% chance
             println!("Enemy encountered! Stopping automatic movement.");
             player.in_combat = true;
             return true; // Indicate that combat should be initiated
@@ -141,8 +141,7 @@ pub fn weighted_random_direction(
     prev_direction
 }
 
-pub fn should_encounter_enemy(chance: u8) -> bool {
+pub fn should_encounter_enemy(game_map: &Map, chance: i32) -> bool {
     let mut rng = rand::thread_rng();
-    let encounter = rng.gen_range(0..100) < chance;
-    encounter
+    rng.gen_range(0..100) < chance
 }

@@ -17,6 +17,14 @@ impl Skill {
         }
     }
 
+    pub fn new_with_exp(level: i32, exp: f32) -> Self {
+        Skill {
+            name: String::new(), // Will be set by key in HashMap
+            level,
+            experience: exp as f64,
+        }
+    }
+
     pub fn add_experience(&mut self, amount: f64) {
         self.experience += amount;
         if self.experience > 200_000_000.0 {

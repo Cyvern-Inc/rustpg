@@ -275,7 +275,6 @@ impl Map {
     }
 
     pub fn is_adjacent_and_facing_campfire(&self, player: &Player) -> bool {
-        let (player_x, player_y) = (self.player_x, self.player_y);
         let (adjacent_x, adjacent_y) = match player.facing {
             Direction::Up => (self.player_x, self.player_y.saturating_sub(1)),
             Direction::Down => (self.player_x, self.player_y + 1),
