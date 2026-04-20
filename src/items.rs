@@ -1,7 +1,9 @@
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
+use std::sync::OnceLock;
 use rand::Rng;
 use std::fmt;
+use std::fs;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Item {
@@ -13,6 +15,14 @@ pub struct Item {
     pub effect: Option<Effect>,
     pub attack_bonus: Option<i32>,
     pub defense_bonus: Option<i32>,
+    pub tool_tag: Option<ToolTag>,
+    /// Minimum Attack level required to equip this weapon.
+    pub equip_level: Option<i32>,
+    /// Descriptive weapon class (e.g. "Scimitar", "2h Sword"). Informational only.
+    pub weapon_type: Option<String>,
+    /// Which equipment slot this item occupies when equipped.
+    /// Weapons: "weapon". Armor: "head", "body", "legs", "shield", "boots", "hands".
+    pub equip_slot: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -34,6 +44,16 @@ pub struct Effect {
     pub stamina_change: i32,
 }
 
+/// Identifies what skill a tool is used for. Lets skill code check for a
+/// valid tool without hard-coding item IDs or names.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub enum ToolTag {
+    Axe,
+    Pickaxe,
+    FishingRod,
+    FishingNet,
+}
+
 // Implement the Display trait for ItemType
 impl fmt::Display for ItemType {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -41,298 +61,25 @@ impl fmt::Display for ItemType {
     }
 }
 
-// Function to create predefined items
-pub fn create_items() -> HashMap<u32, Item> {
-    let mut items = HashMap::new();
+static ITEMS: OnceLock<HashMap<u32, Item>> = OnceLock::new();
+static LOOT_TABLES: OnceLock<HashMap<String, LootTable>> = OnceLock::new();
 
-    // Currency
-    items.insert(
-        100001,
-        Item {
-            id: 100001,
-            name: "Gold Coins".to_string(),
-            item_type: ItemType::Currency,
-            weight: 0.01,
-            durability: None,
-            effect: None,
-            attack_bonus: None,
-            defense_bonus: None,
-        },
-    );
-    items.insert(
-        100002,
-        Item {
-            id: 100002,
-            name: "Silver Coins".to_string(),
-            item_type: ItemType::Currency,
-            weight: 0.01,
-            durability: None,
-            effect: None,
-            attack_bonus: None,
-            defense_bonus: None,
-        },
-    );
-    items.insert(
-        100003,
-        Item {
-            id: 100003,
-            name: "Copper Coins".to_string(),
-            item_type: ItemType::Currency,
-            weight: 0.01,
-            durability: None,
-            effect: None,
-            attack_bonus: None,
-            defense_bonus: None,
-        },
-    );
+/// Returns a reference to the global item table, initialised once on first call.
+pub fn get_items() -> &'static HashMap<u32, Item> {
+    ITEMS.get_or_init(create_items)
+}
 
-    // Weapons and Armor
-    items.insert(
-        100004,
-        Item {
-            id: 100004,
-            name: "Bronze Dagger".to_string(),
-            item_type: ItemType::Weapon,
-            weight: 1.5,
-            durability: Some(100),
-            effect: None,
-            attack_bonus: Some(5),
-            defense_bonus: None,
-        },
-    );
-    items.insert(
-        100008,
-        Item {
-            id: 100008,
-            name: "Leather Gloves".to_string(),
-            item_type: ItemType::Armor,
-            weight: 0.5,
-            durability: Some(50),
-            effect: None,
-            attack_bonus: None,
-            defense_bonus: Some(2),
-        },
-    );
-    items.insert(
-        100009,
-        Item {
-            id: 100009,
-            name: "Leather Boots".to_string(),
-            item_type: ItemType::Armor,
-            weight: 0.7,
-            durability: Some(60),
-            effect: None,
-            attack_bonus: None,
-            defense_bonus: Some(3),
-        },
-    );
-    items.insert(
-        100010,
-        Item {
-            id: 100010,
-            name: "Bronze Pickaxe".to_string(),
-            item_type: ItemType::Weapon,
-            weight: 2.0,
-            durability: Some(150),
-            effect: None,
-            attack_bonus: Some(7),
-            defense_bonus: None,
-        },
-    );
-    items.insert(
-        100011,
-        Item {
-            id: 100011,
-            name: "Bronze Hatchet".to_string(),
-            item_type: ItemType::Weapon,
-            weight: 2.2,
-            durability: Some(130),
-            effect: None,
-            attack_bonus: Some(6),
-            defense_bonus: None,
-        },
-    );
+/// Returns a reference to the global loot table map, initialised once on first call.
+pub fn get_loot_tables() -> &'static HashMap<String, LootTable> {
+    LOOT_TABLES.get_or_init(create_loot_tables)
+}
 
-    // Miscellaneous
-    items.insert(
-        100005,
-        Item {
-            id: 100005,
-            name: "Leather Scrap".to_string(),
-            item_type: ItemType::Misc,
-            weight: 0.2,
-            durability: None,
-            effect: None,
-            attack_bonus: None,
-            defense_bonus: None,
-        },
-    );
-    items.insert(
-        100006,
-        Item {
-            id: 100006,
-            name: "Empty Vial".to_string(),
-            item_type: ItemType::Misc,
-            weight: 0.1,
-            durability: None,
-            effect: None,
-            attack_bonus: None,
-            defense_bonus: None,
-        },
-    );
-    items.insert(
-        100007,
-        Item {
-            id: 100007,
-            name: "Small Bone".to_string(),
-            item_type: ItemType::Misc,
-            weight: 0.3,
-            durability: None,
-            effect: None,
-            attack_bonus: None,
-            defense_bonus: None,
-        },
-    );
-    items.insert(
-        100013,
-        Item {
-            id: 100013,
-            name: "Fishing Rod".to_string(),
-            item_type: ItemType::Misc,
-            weight: 2.0,
-            durability: Some(200),
-            effect: None,
-            attack_bonus: None,
-            defense_bonus: None,
-        },
-    );
-    items.insert(
-        100020,
-        Item {
-            id: 100020,
-            name: "Flint 'n Steel".to_string(),
-            item_type: ItemType::Misc,
-            weight: 0.5,
-            durability: Some(75),
-            effect: None,
-            attack_bonus: None,
-            defense_bonus: None,
-        },
-    );
-    items.insert(
-        100021,
-        Item {
-            id: 100021,
-            name: "Fishing Bait".to_string(),
-            item_type: ItemType::Misc,
-            weight: 0.01,
-            durability: None,
-            effect: None,
-            attack_bonus: None,
-            defense_bonus: None,
-        },
-    );
-    items.insert(
-        100022,
-        Item {
-            id: 100022,
-            name: "Log".to_string(),
-            item_type: ItemType::Misc,
-            weight: 5.0,
-            durability: None,
-            effect: None,
-            attack_bonus: None,
-            defense_bonus: None,
-        },
-    );
-
-    // Consumables
-    items.insert(
-        100015,
-        Item {
-            id: 100015,
-            name: "Raw Shrimp".to_string(),
-            item_type: ItemType::Consumable,
-            weight: 0.3,
-            durability: None,
-            effect: Some(Effect {
-                health_change: 5,
-                stamina_change: 0,
-            }),
-            attack_bonus: None,
-            defense_bonus: None,
-        },
-    );
-    items.insert(
-        100016,
-        Item {
-            id: 100016,
-            name: "Cooked Shrimp".to_string(),
-            item_type: ItemType::Consumable,
-            weight: 0.3,
-            durability: None,
-            effect: Some(Effect {
-                health_change: 10,
-                stamina_change: 5,
-            }),
-            attack_bonus: None,
-            defense_bonus: None,
-        },
-    );
-
-    // Additional Consumables
-    items.insert(
-        100017,
-        Item {
-            id: 100017,
-            name: "Raw Beef".to_string(),
-            item_type: ItemType::Consumable,
-            weight: 0.5,
-            durability: None,
-            effect: Some(Effect {
-                health_change: 8,
-                stamina_change: 0,
-            }),
-            attack_bonus: None,
-            defense_bonus: None,
-        },
-    );
-    items.insert(
-        100018,
-        Item {
-            id: 100018,
-            name: "Cooked Beef".to_string(),
-            item_type: ItemType::Consumable,
-            weight: 0.5,
-            durability: None,
-            effect: Some(Effect {
-                health_change: 20,
-                stamina_change: 10,
-            }),
-            attack_bonus: None,
-            defense_bonus: None,
-        },
-    );
-
-    // Basic food items
-    items.insert(
-        100019,
-        Item {
-            id: 100019,
-            name: "Cabbage".to_string(),
-            item_type: ItemType::Consumable,
-            weight: 0.2,
-            durability: None,
-            effect: Some(Effect {
-                health_change: 4,
-                stamina_change: 2,
-            }),
-            attack_bonus: None,
-            defense_bonus: None,
-        },
-    );
-
-    items
+fn create_items() -> HashMap<u32, Item> {
+    let content = fs::read_to_string("data/items.json")
+        .expect("Could not read data/items.json");
+    let items_vec: Vec<Item> = serde_json::from_str(&content)
+        .expect("Failed to parse data/items.json");
+    items_vec.into_iter().map(|item| (item.id, item)).collect()
 }
 
 pub fn get_starting_items() -> HashMap<u32, u32> {
@@ -346,6 +93,7 @@ pub fn get_starting_items() -> HashMap<u32, u32> {
     starting_items.insert(100010, 1);  // 1 Bronze Pickaxe
     starting_items.insert(100011, 1);  // 1 Bronze Hatchet
     starting_items.insert(100013, 1);  // 1 Fishing Rod
+    starting_items.insert(100026, 1);  // 1 Small Net
     starting_items.insert(100021, 242); // 242 Fishing Bait
     starting_items.insert(100022, 1);  // 1 Log
     starting_items.insert(100001, 3);  // 3 Gold Coins
@@ -362,24 +110,35 @@ pub struct LootTable {
     pub items: Vec<(u32, Option<(u32, u32)>, f32)>, // (Item ID, Optional Quantity Range, Weight)
 }
 
-// Create basic loot tables using weight for item drop probability
-pub fn create_loot_tables() -> HashMap<String, LootTable> {
-    let mut loot_tables = HashMap::new();
+#[derive(Deserialize)]
+struct LootEntryDef {
+    item_id: u32,
+    qty_min: Option<u32>,
+    qty_max: Option<u32>,
+    weight: f32,
+}
 
-    loot_tables.insert(
-        "common".to_string(),
-        LootTable {
-            items: vec![
-                (100001, Some((1, 5)), 50.0), // 1-5 Gold Coins [Weight: 50]
-                (100004, Some((1, 1)), 10.0), // Bronze Dagger [Weight: 10]
-                (100015, Some((1, 2)), 20.0), // Raw Shrimp [Weight: 20]
-                (100005, Some((1, 3)), 15.0), // Leather Scrap [Weight: 15]
-                (0, None, 5.0),               // Nothing [Weight: 5]
-            ],
-        },
-    );
+fn create_loot_tables() -> HashMap<String, LootTable> {
+    let content = fs::read_to_string("data/loot_tables.json")
+        .expect("Could not read data/loot_tables.json");
+    let raw: HashMap<String, Vec<LootEntryDef>> = serde_json::from_str(&content)
+        .expect("Failed to parse data/loot_tables.json");
 
-    loot_tables
+    raw.into_iter()
+        .map(|(name, entries)| {
+            let items = entries
+                .into_iter()
+                .map(|e| {
+                    let qty = match (e.qty_min, e.qty_max) {
+                        (Some(min), Some(max)) => Some((min, max)),
+                        _ => None,
+                    };
+                    (e.item_id, qty, e.weight)
+                })
+                .collect();
+            (name, LootTable { items })
+        })
+        .collect()
 }
 
 // Function to calculate loot using weight-based approach

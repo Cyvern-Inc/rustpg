@@ -1,6 +1,9 @@
 use serde::{Serialize, Deserialize};
 use std::collections::HashMap;
 
+pub const MAX_LEVEL: i32 = 99;
+pub const MAX_EXPERIENCE: f64 = 200_000_000.0;
+
 #[derive(Debug, Default, Clone, Serialize, Deserialize)]
 pub struct Skill {
     pub name: String,
@@ -19,23 +22,14 @@ impl Skill {
 
     pub fn add_experience(&mut self, amount: f64) {
         self.experience += amount;
-        if self.experience > 200_000_000.0 {
-            self.experience = 200_000_000.0;
+        if self.experience > MAX_EXPERIENCE {
+            self.experience = MAX_EXPERIENCE;
         }
-        while self.experience >= xp_for_level((self.level + 1) as u32) && self.level < 99 {
+        while self.experience >= xp_for_level((self.level + 1) as u32) && self.level < MAX_LEVEL {
             self.level += 1;
-            println!("Skill leveled up: {} is now level {}", self.name, self.level);
         }
     }
 
-    pub fn display_skill_info(&self) {
-        println!(
-            "Skill: {}, Level: {}, Experience: {}",
-            self.name,
-            self.level,
-            self.experience / 10.0 // Use 10.0 if division is necessary
-        );
-    }
 }
 
 fn xp_for_level(level: u32) -> f64 {
@@ -63,28 +57,36 @@ pub fn initialize_skills() -> HashMap<String, Skill> {
     skills.insert("Woodcutting".to_string(), Skill::new("Woodcutting", 1));
     skills.insert("Mining".to_string(), Skill::new("Mining", 1));
     skills.insert("Fishing".to_string(), Skill::new("Fishing", 1));
+    // Artisan Skills
+    skills.insert("Cooking".to_string(), Skill::new("Cooking", 1));
     skills
 }
 
 pub fn combat_xp_calculation(attack_counts: &HashMap<AttackType, usize>) -> HashMap<String, f32> {
     let mut xp_gains = HashMap::new();
+    let total_attacks: usize = attack_counts.values().sum();
 
     for (&attack_type, &count) in attack_counts {
         match attack_type {
             AttackType::Main => {
-                let xp = (count as f32) * 10.0; // Example: 10 XP per main attack
-                *xp_gains.entry("Attack".to_string()).or_insert(0.0) += xp;
+                *xp_gains.entry("Attack".to_string()).or_insert(0.0) += (count as f32) * 10.0;
             }
             AttackType::Charged => {
-                let xp = (count as f32) * 20.0; // Example: 20 XP per charged attack
-                *xp_gains.entry("Strength".to_string()).or_insert(0.0) += xp;
+                *xp_gains.entry("Strength".to_string()).or_insert(0.0) += (count as f32) * 20.0;
             }
             AttackType::Magic => {
-                let xp = (count as f32) * 15.0; // Example: 15 XP per magic attack
-                *xp_gains.entry("Magic".to_string()).or_insert(0.0) += xp;
+                *xp_gains.entry("Magic".to_string()).or_insert(0.0) += (count as f32) * 15.0;
             }
         }
     }
+
+    // Hitpoints XP: 1.33 XP per attack regardless of style
+    if total_attacks > 0 {
+        *xp_gains.entry("Hitpoints".to_string()).or_insert(0.0) += (total_attacks as f32) * 1.33;
+    }
+
+    // Slaying XP: flat 4 XP awarded on kill (added at call site via a fixed entry)
+    xp_gains.insert("Slaying".to_string(), 4.0);
 
     xp_gains
 }

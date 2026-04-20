@@ -1,4 +1,5 @@
 use serde::{Serialize, Deserialize};
+use std::fs;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 pub struct Enemy {
@@ -37,14 +38,8 @@ impl Enemy {
     }
 }
 
-// Function to create some basic enemies
 pub fn basic_enemies() -> Vec<Enemy> {
-    vec![
-        Enemy::new("Goblin", 30, 5, "common"),       // Goblin drops from common loot table
-        Enemy::new("Orc", 50, 10, "uncommon"),       // Orc drops from uncommon loot table
-        Enemy::new("Bandit", 40, 8, "common_food"),       // Bandit drops from common loot table
-        Enemy::new("Wolf", 35, 7, "uncommon"),    // Wolf drops from common_food loot table
-        Enemy::new("Skeleton", 45, 9, "uncommon"),   // Skeleton drops from uncommon loot table
-        Enemy::new("Troll", 80, 15, "rare"),         // Troll drops from rare loot table
-    ]
+    let content = fs::read_to_string("data/enemies.json")
+        .expect("Could not read data/enemies.json");
+    serde_json::from_str(&content).expect("Failed to parse data/enemies.json")
 }
