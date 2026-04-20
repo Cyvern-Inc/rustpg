@@ -11,10 +11,10 @@ Welcome to Rust CLI RPG, a command-line role-playing game built entirely in pure
 - **Action Feed**: A persistent sidebar that merges consecutive events (e.g., multiple kills of the same enemy) to keep the combat log clean and readable.
 
 # Planned Features
-- **Overworld Enemies**: Implement more intelligent enemy behaviors, such as overworld enemies attacking players, and smarter situational combat logic.
-- **Crafting System**: Enable players to craft items from gathered resources.
-- **Expanded Skills**: Add more skills and deeper progression.
-- **Enhanced Storyline**: Develop a more intricate and engaging narrative with multiple quests and story arcs.
+- **More Dynamic Overworld Enemies**: Implement more intelligent enemy behaviors, such as overworld enemies avoiding stronger players, and smarter situational combat logic.
+- **In-Depth Crafting System**: Enable players to craft items from gathered resources, including more tools and object to object interactions.
+- **New and Expanded Skills**: Add more Gathering, Artisan, and Combat skills with more meeningfull progression paths.
+- **Enhanced Quest-System and Storyline**: Develop a more intricate and engaging narrative with multiple quests and story arcs.
 
 
 ## Getting Started
