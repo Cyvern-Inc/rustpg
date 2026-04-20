@@ -3,13 +3,12 @@
 Welcome to Rust CLI RPG, a command-line role-playing game built entirely in pure Rust! This game features a variety of skills to train, quests to complete, enemies to fight, and loot to collect, all within a simple text-based environment.
 
 ## Features
-- **Tile-Based Map Navigation**: Explore a large map with direct user input and explore a dynamic world.
-- **Quests and Story**: Engage in quests like retrieving the lost sword from a goblin camp.
-- **Combat System**: Fight enemies, including goblins, using regular and heavy attacks, as well as magic options.
-- **Skills**: Train various skills, such as Attack, Strength, Magic, and more, with a level-up system.
-- **Inventory System**: Manage the items you collect during your adventures, including coins, weapons, armor, and other resources. Items stack in your inventory, and types are categorized for easy reference.
-- **Loot System**: Defeated enemies drop loot based on defined loot tables, which are added directly to your inventory.
-- **Player Status**: View detailed player stats, including health, experience, level, skills, and inventory.
+- **Advanced TUI**: A responsive, centered terminal interface with dynamic resizing, sidebar action feeds, and multi-line command input.
+- **Dynamic NPC System**: Overworld entities with roaming behaviors, home-camp logic, and a branching dialogue system.
+- **Automated Combat (FAF)**: A "Find and Fight" automation loop with BFS pathfinding, customizable attack styles, and smart resource management.
+- **Robust Save Management**: Slot-based save system allowing for character duplication, deletion, and detailed metadata tracking (level, last played).
+- **Data-Driven Content**: Enemies, items, and loot tables are managed via external JSON files for easy balancing and expansion.
+- **Action Feed**: A persistent sidebar that merges consecutive events (e.g., multiple kills of the same enemy) to keep the combat log clean and readable.
 
 # Planned Features
 - **Overworld Enemies**: Implement more intelligent enemy behaviors, such as overworld enemies attacking players, and smarter situational combat logic.
@@ -48,21 +47,26 @@ NOTE: While this game is in early development, precompiled releases will be few 
    ```
 
 ## Controls
-- **Movement**: Use `w`, `a`, `s`, `d` to move up, left, down, and right respectively.
-- **Inventory**: Type `i` to check your inventory.
-- **Player Status**: Type `status` to view your player stats, including health, level, experience, and inventory.
-- **Quit**: Type `q` to quit the game.
+- **Movement**: Use `w`, `a`, `s`, `d` to move.
+- **Command Input**: Press `Enter` to open the command box.
+- **Submit Command**: Type your command and press `Enter` again.
+- **Cancel Input**: Press `Esc` to clear the buffer and return to walk mode.
+- **Quit**: Type `q` or `quit` in the command box to save and exit.
+
+## Common Commands
+- `status`: View detailed player statistics and skill levels.
+- `i` or `inventory`: Manage your items and equipment.
+- `quests`: Check active quest progress and objectives.
+- `cut` / `gather wood`: Interact with nearby trees.
+- `fish` / `gather fish`: Interact with nearby water sources.
+- `talk`: Initiate dialogue with adjacent NPCs.
+- `faf`: Begin the "Find and Fight" auto-combat loop (use `faf spell` or `faf charged` for different styles).
 
 ## Skills Overview
-- **Combat Skills**: Train skills like Attack, Defense, and Magic to become a more formidable warrior.
-- **Gathering Skills**: Mine ores, fish, or cut down trees to gather resources.
-- **Utility Skills**: Use Thieving to pickpocket NPCs, or Sourceries for utility spells.
-
-### Example Skills
-- **Attack**: Increases damage dealt in melee combat.
-- **Defense**: Increases resistance to enemy attacks.
-- **Magic**: Grants access to new spells for combat and utility.
-- **Fishing**: Catch fish for food to restore health.
+- **Combat**: Train Attack, Defense, and Magic to survive encounters with tougher enemies.
+- **Woodcutting**: Harvest trees for logs; includes stump regeneration logic and specialized gathering tools.
+- **Fishing**: Catch various types of fish from water tiles to be used as food.
+- **Cooking**: Prepare raw ingredients into life-saving consumables.
 
 ## Loot System and Inventory Management
 - **Loot Tables**: Enemies drop loot based on defined loot tables. For example, goblins may drop items like coins, weapons, and consumables.
@@ -129,4 +133,3 @@ This project is licensed under the GNU GENERAL PUBLIC LICENSE Version 3 (GNUGPL 
 - Special thanks to contributors who helped improve the game and add more exciting features.
 
 Enjoy your adventure in the Rust CLI RPG!
-
