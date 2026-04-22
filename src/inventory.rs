@@ -132,8 +132,9 @@ pub fn display_inventory(
         rows.push("  --------".to_string());
         match &player.equipped_weapon {
             Some(w) => {
-                let bonus = w.attack_bonus.map(|b| format!(" (+{} atk)", b)).unwrap_or_default();
-                rows.push(format!("  Weapon  {}{}", w.name, bonus));
+                let acc = w.melee_accuracy.map(|b| format!(" (+{} acc)", b)).unwrap_or_default();
+                let str_bonus = w.melee_strength.map(|b| format!(" (+{} str)", b)).unwrap_or_default();
+                rows.push(format!("  Weapon  {}{}{}", w.name, acc, str_bonus));
             }
             None => rows.push("  Weapon  (none)".to_string()),
         }
@@ -147,7 +148,7 @@ pub fn display_inventory(
         ] {
             match player.armor_slots.get(*slot_key) {
                 Some(a) => {
-                    let bonus = a.defense_bonus.map(|b| format!(" (+{} def)", b)).unwrap_or_default();
+                    let bonus = a.melee_defense.map(|b| format!(" (+{} def)", b)).unwrap_or_default();
                     rows.push(format!("  {}  {}{}", label, a.name, bonus));
                 }
                 None => rows.push(format!("  {}  (none)", label)),
@@ -307,18 +308,28 @@ pub fn display_inventory(
                         match item {
                             Some(ref it) if it.equip_slot.is_some() => {
                                 let slot = it.equip_slot.clone().unwrap();
-                                let required = it.equip_level.unwrap_or(1);
-                                let attack_level = player
-                                    .skills
-                                    .get("Attack")
-                                    .map(|s| s.level)
-                                    .unwrap_or(1);
-                                if attack_level < required {
-                                    feedback = Some(format!(
-                                        "You need Attack level {} to equip {}. (Your level: {})",
-                                        required, name, attack_level
-                                    ));
+                                let can_equip = if slot == "weapon" {
+                                    let req = it.equip_level.unwrap_or(1);
+                                    let lvl = player.skills.get("Attack").map(|s| s.level).unwrap_or(1);
+                                    if lvl < req {
+                                        feedback = Some(format!(
+                                            "You need Attack level {} to equip {}. (Your level: {})",
+                                            req, name, lvl
+                                        ));
+                                        false
+                                    } else { true }
                                 } else {
+                                    let req = it.defence_req.unwrap_or(1);
+                                    let lvl = player.skills.get("Defence").map(|s| s.level).unwrap_or(1);
+                                    if lvl < req {
+                                        feedback = Some(format!(
+                                            "You need Defence level {} to equip {}. (Your level: {})",
+                                            req, name, lvl
+                                        ));
+                                        false
+                                    } else { true }
+                                };
+                                if can_equip {
                                     // Remove from inventory first
                                     if let Some(qty) = player.inventory.get_mut(&item_id) {
                                         *qty -= 1;
@@ -331,19 +342,16 @@ pub fn display_inventory(
                                         if let Some(old) = player.equipped_weapon.take() {
                                             *player.inventory.entry(old.id).or_insert(0) += 1;
                                         }
-                                        let bonus = it.attack_bonus
-                                            .map(|b| format!(" (+{} atk)", b))
-                                            .unwrap_or_default();
+                                        let acc = it.melee_accuracy.map(|b| format!(" (+{} acc)", b)).unwrap_or_default();
+                                        let str_bonus = it.melee_strength.map(|b| format!(" (+{} str)", b)).unwrap_or_default();
                                         player.equipped_weapon = item;
-                                        feedback = Some(format!("Equipped {}{}.", name, bonus));
+                                        feedback = Some(format!("Equipped {}{}{}.", name, acc, str_bonus));
                                     } else {
                                         // Swap old armor in this slot back to inventory
                                         if let Some(old) = player.armor_slots.remove(&slot) {
                                             *player.inventory.entry(old.id).or_insert(0) += 1;
                                         }
-                                        let bonus = it.defense_bonus
-                                            .map(|b| format!(" (+{} def)", b))
-                                            .unwrap_or_default();
+                                        let bonus = it.melee_defense.map(|b| format!(" (+{} def)", b)).unwrap_or_default();
                                         player.armor_slots.insert(slot, item.unwrap());
                                         feedback = Some(format!("Equipped {}{}.", name, bonus));
                                     }

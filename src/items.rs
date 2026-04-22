@@ -13,11 +13,27 @@ pub struct Item {
     pub weight: f32,
     pub durability: Option<u32>,
     pub effect: Option<Effect>,
-    pub attack_bonus: Option<i32>,
-    pub defense_bonus: Option<i32>,
+    /// Added to the d20 accuracy roll for melee attacks.
+    #[serde(alias = "attack_bonus", default)]
+    pub melee_accuracy: Option<i32>,
+    /// Contributes to the Max Hit calculation: floor(1 + str*0.2 + gear_str*0.2).
+    #[serde(default)]
+    pub melee_strength: Option<i32>,
+    /// Added to the defender's Armour Class against melee attacks.
+    #[serde(alias = "defense_bonus", default)]
+    pub melee_defense: Option<i32>,
+    /// Added to the d20 accuracy roll for magic attacks.
+    #[serde(default)]
+    pub magic_accuracy: Option<i32>,
+    /// Added to the defender's Armour Class against magic attacks.
+    #[serde(default)]
+    pub magic_defense: Option<i32>,
     pub tool_tag: Option<ToolTag>,
     /// Minimum Attack level required to equip this weapon.
     pub equip_level: Option<i32>,
+    /// Minimum Defence level required to equip this armour piece.
+    #[serde(default)]
+    pub defence_req: Option<i32>,
     /// Descriptive weapon class (e.g. "Scimitar", "2h Sword"). Informational only.
     pub weapon_type: Option<String>,
     /// Which equipment slot this item occupies when equipped.

@@ -5,17 +5,24 @@ use std::fs;
 pub struct Enemy {
     pub name: String,
     pub health: i32,
+    /// Accuracy modifier added to the enemy's d20 attack roll.
     pub attack: i32,
-    pub loot_table: String, // Added loot_table
+    /// Used to calculate the enemy's Max Hit: floor(1 + strength * 0.2).
+    pub strength: i32,
+    /// Added to the enemy's Armour Class when the player attacks.
+    pub defense: i32,
+    pub loot_table: String,
 }
 
 impl Enemy {
-    pub fn new(name: &str, health: i32, attack: i32, loot_table: &str) -> Enemy {
+    pub fn new(name: &str, health: i32, attack: i32, strength: i32, defense: i32, loot_table: &str) -> Enemy {
         Enemy {
             name: name.to_string(),
             health,
             attack,
-            loot_table: loot_table.to_string(), // Initialize loot_table here
+            strength,
+            defense,
+            loot_table: loot_table.to_string(),
         }
     }
 

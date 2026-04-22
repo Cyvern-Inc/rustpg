@@ -120,8 +120,9 @@ impl Player {
         rows.push("  --------".to_string());
         match &self.equipped_weapon {
             Some(w) => {
-                let bonus = w.attack_bonus.map(|b| format!(" (+{} atk)", b)).unwrap_or_default();
-                rows.push(format!("  Weapon  {}{}", w.name, bonus));
+                let acc = w.melee_accuracy.map(|b| format!(" (+{} acc)", b)).unwrap_or_default();
+                let str_bonus = w.melee_strength.map(|b| format!(" (+{} str)", b)).unwrap_or_default();
+                rows.push(format!("  Weapon  {}{}{}", w.name, acc, str_bonus));
             }
             None => rows.push("  Weapon  (none)".to_string()),
         }
@@ -135,7 +136,7 @@ impl Player {
         ] {
             match self.armor_slots.get(*slot_key) {
                 Some(a) => {
-                    let bonus = a.defense_bonus.map(|b| format!(" (+{} def)", b)).unwrap_or_default();
+                    let bonus = a.melee_defense.map(|b| format!(" (+{} def)", b)).unwrap_or_default();
                     rows.push(format!("  {}  {}{}", label, a.name, bonus));
                 }
                 None => rows.push(format!("  {}  (none)", label)),

@@ -50,6 +50,7 @@ pub fn initialize_skills() -> HashMap<String, Skill> {
     skills.insert("Hitpoints".to_string(), Skill::new("Hitpoints", 1));
     skills.insert("Attack".to_string(), Skill::new("Attack", 1));
     skills.insert("Strength".to_string(), Skill::new("Strength", 1));
+    skills.insert("Defence".to_string(), Skill::new("Defence", 1));
     skills.insert("Magic".to_string(), Skill::new("Magic", 1));
     skills.insert("Slaying".to_string(), Skill::new("Slaying", 1));
     skills.insert("Adventuring".to_string(), Skill::new("Adventuring", 1));
@@ -77,6 +78,9 @@ pub fn combat_xp_calculation(attack_counts: &HashMap<AttackType, usize>) -> Hash
             AttackType::Magic => {
                 *xp_gains.entry("Magic".to_string()).or_insert(0.0) += (count as f32) * 15.0;
             }
+            AttackType::Defensive => {
+                *xp_gains.entry("Defence".to_string()).or_insert(0.0) += (count as f32) * 10.0;
+            }
         }
     }
 
@@ -97,4 +101,5 @@ pub enum AttackType {
     Main,
     Charged,
     Magic,
+    Defensive,
 }

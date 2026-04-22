@@ -1,8 +1,8 @@
 [
-  { "name": "Goblin",   "health": 30, "attack":  5, "loot_table": "common"      },
-  { "name": "Orc",      "health": 50, "attack": 10, "loot_table": "uncommon"    },
-  { "name": "Bandit",   "health": 40, "attack":  8, "loot_table": "common_food" },
-  { "name": "Wolf",     "health": 35, "attack":  7, "loot_table": "uncommon"    },
-  { "name": "Skeleton", "health": 45, "attack":  9, "loot_table": "uncommon"    },
-  { "name": "Troll",    "health": 80, "attack": 15, "loot_table": "rare"        }
+  { "name": "Goblin",   "health": 10, "attack": 4, "strength": 4,  "defense": 3, "loot_table": "common"      },
+  { "name": "Orc",      "health": 45, "attack": 7, "strength": 8,  "defense": 6, "loot_table": "uncommon"    },
+  { "name": "Bandit",   "health": 30, "attack": 6, "strength": 6,  "defense": 4, "loot_table": "common_food" },
+  { "name": "Wolf",     "health": 15, "attack": 5, "strength": 4,  "defense": 3, "loot_table": "uncommon"    },
+  { "name": "Skeleton", "health": 30, "attack": 6, "strength": 7,  "defense": 5, "loot_table": "uncommon"    },
+  { "name": "Troll",    "health": 60, "attack": 8, "strength": 12, "defense": 7, "loot_table": "rare"        }
 ]

@@ -687,7 +687,7 @@ fn handle_faf_loop(
                 if let Some((cx, cy)) = npc.home_camp {
                     game_map.notify_camp_npc_removed(cx, cy);
                 }
-                let enemy = Enemy::new(&npc.enemy_name, npc.health, npc.attack, &npc.loot_table);
+                let enemy = Enemy::new(&npc.enemy_name, npc.health, npc.attack, npc.strength, npc.defense, &npc.loot_table);
 
                 xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
                 player.in_combat = true;
@@ -753,7 +753,7 @@ fn handle_faf_loop(
                 if let Some((cx, cy)) = npc.home_camp {
                     game_map.notify_camp_npc_removed(cx, cy);
                 }
-                let enemy = Enemy::new(&npc.enemy_name, npc.health, npc.attack, &npc.loot_table);
+                let enemy = Enemy::new(&npc.enemy_name, npc.health, npc.attack, npc.strength, npc.defense, &npc.loot_table);
 
                 xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
                 player.in_combat = true;
@@ -793,7 +793,7 @@ fn handle_faf_loop(
                 if let Some((cx, cy)) = npc.home_camp {
                     game_map.notify_camp_npc_removed(cx, cy);
                 }
-                let enemy = Enemy::new(&npc.enemy_name, npc.health, npc.attack, &npc.loot_table);
+                let enemy = Enemy::new(&npc.enemy_name, npc.health, npc.attack, npc.strength, npc.defense, &npc.loot_table);
 
                 xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
                 player.in_combat = true;
@@ -864,7 +864,7 @@ fn try_move_player(
                     if let Some((cx, cy)) = npc.home_camp {
                         game_map.notify_camp_npc_removed(cx, cy);
                     }
-                    let enemy = Enemy::new(&npc.enemy_name, npc.health, npc.attack, &npc.loot_table);
+                    let enemy = Enemy::new(&npc.enemy_name, npc.health, npc.attack, npc.strength, npc.defense, &npc.loot_table);
                     xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
                     let entry = run_combat(player, game_map, enemy);
                     return (Some(entry), true);
@@ -894,7 +894,7 @@ fn try_move_player(
             if let Some((cx, cy)) = npc.home_camp {
                 game_map.notify_camp_npc_removed(cx, cy);
             }
-            let enemy = Enemy::new(&npc.enemy_name, npc.health, npc.attack, &npc.loot_table);
+            let enemy = Enemy::new(&npc.enemy_name, npc.health, npc.attack, npc.strength, npc.defense, &npc.loot_table);
             xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
             let entry = run_combat(player, game_map, enemy);
             return (Some(entry), true);
@@ -1011,9 +1011,10 @@ fn execute_command(
     // FAF — manages its own raw mode and pushes its own action
     if (input == "faf" || input.starts_with("faf ")) && !player.in_combat {
         let style = match input.trim_start_matches("faf").trim() {
-            "spell"   => FafAttackStyle::Spell,
-            "charged" => FafAttackStyle::Charged,
-            _         => FafAttackStyle::Main,
+            "spell"     => FafAttackStyle::Spell,
+            "charged"   => FafAttackStyle::Charged,
+            "defensive" => FafAttackStyle::Defensive,
+            _           => FafAttackStyle::Main,
         };
         handle_faf_loop(player, game_map, recent_actions, rng, style);
         return String::new();

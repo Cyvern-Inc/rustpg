@@ -35,9 +35,7 @@ const INNER: usize = HEALTH_BAR_W + 6;
 // Combat tuning constants
 // ---------------------------------------------------------------------------
 
-const BASE_ATTACK_DAMAGE: i32 = 10;
-const SPELL_DAMAGE: i32 = 15;
-const CHARGED_DAMAGE: i32 = 30;
+const BASE_SPELL_DAMAGE: i32 = 4;
 const RUN_SUCCESS_CHANCE: f64 = 0.5;
 
 // ---------------------------------------------------------------------------
@@ -61,14 +59,16 @@ pub enum FafAttackStyle {
     Main,
     Spell,
     Charged,
+    Defensive,
 }
 
 impl FafAttackStyle {
     pub fn display_name(&self) -> &'static str {
         match self {
-            FafAttackStyle::Main    => "MAIN",
-            FafAttackStyle::Spell   => "SPELL",
-            FafAttackStyle::Charged => "CHARGED",
+            FafAttackStyle::Main      => "MAIN",
+            FafAttackStyle::Spell     => "SPELL",
+            FafAttackStyle::Charged   => "CHARGED",
+            FafAttackStyle::Defensive => "DEFENSIVE",
         }
     }
 }
@@ -195,8 +195,8 @@ fn build_combat_frame(
         out.push_str(&row!("Charged attack ready!"));
         out.push_str(&row!("(any key) Fire charged attack"));
     } else {
-        out.push_str(&row!("(m) Attack    (c) Charged    (s) Spell"));
-        out.push_str(&row!("(i) Items     (r) Run"));
+        out.push_str(&row!("(m) Attack  (d) Defend  (c) Charged  (s) Spell"));
+        out.push_str(&row!("(i) Items   (r) Run"));
     }
     out.push_str(&format!("{}╚{}╝\r\n", pad, "═".repeat(INNER)));
 
@@ -204,31 +204,91 @@ fn build_combat_frame(
 }
 
 // ---------------------------------------------------------------------------
-// Attack helpers — return damage dealt, no side-effect output
+// Combat math helpers (spec §5 & §6)
 // ---------------------------------------------------------------------------
 
-fn main_attack(player: &Player, enemy: &mut Enemy) -> i32 {
-    let mut damage = BASE_ATTACK_DAMAGE;
-    if let Some(weapon) = &player.equipped_weapon {
-        damage += weapon.attack_bonus.unwrap_or(0);
-    }
-    enemy.take_damage(damage);
-    damage
+/// Player's Armour Class against melee attacks: 10 + Defence level + gear melee defense.
+fn player_ac(player: &Player) -> i32 {
+    let def_level = player.skills.get("Defence").map(|s| s.level).unwrap_or(1);
+    let gear_def: i32 = player.armor_slots.values().filter_map(|a| a.melee_defense).sum();
+    10 + def_level + gear_def
 }
 
-fn spell_attack(player: &Player, enemy: &mut Enemy) -> i32 {
-    if player.skills.get("Magic").is_some() {
-        let damage = SPELL_DAMAGE;
-        enemy.take_damage(damage);
-        damage
+/// Player's Armour Class against magic attacks: 10 + floor(magic/2) + floor(defence/2) + gear magic defense.
+fn player_magic_ac(player: &Player) -> i32 {
+    let magic_level = player.skills.get("Magic").map(|s| s.level).unwrap_or(1);
+    let def_level = player.skills.get("Defence").map(|s| s.level).unwrap_or(1);
+    let gear_magic_def: i32 = player.armor_slots.values().filter_map(|a| a.magic_defense).sum();
+    10 + (magic_level / 2) + (def_level / 2) + gear_magic_def
+}
+
+/// Enemy's Armour Class: 10 + enemy defense (no equipment pools yet).
+fn enemy_ac(enemy: &Enemy) -> i32 {
+    10 + enemy.defense
+}
+
+/// Player's melee max-hit: floor(1 + Strength*0.2 + gear_strength*0.2), minimum 1.
+fn player_max_hit(player: &Player) -> i32 {
+    let str_level = player.skills.get("Strength").map(|s| s.level).unwrap_or(1);
+    let gear_str: i32 = player.equipped_weapon.as_ref().and_then(|w| w.melee_strength).unwrap_or(0);
+    ((1.0 + (str_level as f64 * 0.2) + (gear_str as f64 * 0.2)).floor() as i32).max(1)
+}
+
+/// Enemy's melee max-hit: floor(1 + strength*0.2), minimum 1.
+fn enemy_max_hit(enemy: &Enemy) -> i32 {
+    ((1.0 + (enemy.strength as f64 * 0.2)).floor() as i32).max(1)
+}
+
+// ---------------------------------------------------------------------------
+// Attack helpers — return (damage_dealt, hit: bool)
+// ---------------------------------------------------------------------------
+
+/// Standard melee attack (used for both Main and Defensive styles).
+fn melee_attack(player: &Player, enemy: &mut Enemy, rng: &mut impl Rng) -> (i32, bool) {
+    let atk_level = player.skills.get("Attack").map(|s| s.level).unwrap_or(1);
+    let gear_acc: i32 = player.equipped_weapon.as_ref().and_then(|w| w.melee_accuracy).unwrap_or(0);
+    let roll = rng.gen_range(1..=20) + atk_level + gear_acc;
+    if roll >= enemy_ac(enemy) {
+        let dmg = rng.gen_range(1..=player_max_hit(player));
+        enemy.take_damage(dmg);
+        (dmg, true)
     } else {
-        0
+        (0, false)
     }
 }
 
-fn charged_attack(enemy: &mut Enemy, charge_damage: i32) -> i32 {
-    enemy.take_damage(charge_damage);
-    charge_damage
+/// Enemy attacks the player. Returns (damage_dealt, hit: bool).
+fn enemy_melee_attack(enemy: &Enemy, player: &Player, rng: &mut impl Rng) -> (i32, bool) {
+    let roll = rng.gen_range(1..=20) + enemy.attack;
+    if roll >= player_ac(player) {
+        let dmg = rng.gen_range(1..=enemy_max_hit(enemy));
+        (dmg, true)
+    } else {
+        (0, false)
+    }
+}
+
+/// Magic attack using spec §5 formula. Returns (damage_dealt, hit: bool).
+fn spell_attack(player: &Player, enemy: &mut Enemy, rng: &mut impl Rng) -> (i32, bool) {
+    let magic_level = player.skills.get("Magic").map(|s| s.level).unwrap_or(1);
+    let gear_magic_acc: i32 = player.equipped_weapon.as_ref().and_then(|w| w.magic_accuracy).unwrap_or(0);
+    let roll = rng.gen_range(1..=20) + magic_level + gear_magic_acc;
+    if roll >= enemy_ac(enemy) {
+        let gear_magic_str: i32 = player.equipped_weapon.as_ref().and_then(|w| w.melee_strength).unwrap_or(0);
+        let max_hit = BASE_SPELL_DAMAGE + ((magic_level as f64 * 0.1) + (gear_magic_str as f64 * 0.25)).floor() as i32;
+        let dmg = rng.gen_range(1..=max_hit.max(1));
+        enemy.take_damage(dmg);
+        (dmg, true)
+    } else {
+        (0, false)
+    }
+}
+
+/// Charged attack — guaranteed hit, deals exactly player max-hit (no variance), grants Strength XP.
+fn charged_attack(player: &Player, enemy: &mut Enemy) -> i32 {
+    let dmg = player_max_hit(player);
+    enemy.take_damage(dmg);
+    dmg
 }
 
 // ---------------------------------------------------------------------------
@@ -248,7 +308,6 @@ pub fn handle_combat(
 
     let enemy_max_hp = enemy.health;
     let mut charging = false;
-    let mut charge_damage = 0;
     let mut msg_lines: Vec<String> = vec![
         format!("You've encountered a {}!", enemy.name),
         String::new(),
@@ -294,11 +353,11 @@ pub fn handle_combat(
             }
 
             if charging {
-                // Fire the queued charged attack
-                let dmg = charged_attack(&mut enemy, charge_damage);
+                // Fire the queued charged attack (guaranteed hit, full max-hit)
+                let dmg = charged_attack(player, &mut enemy);
                 charging = false;
-                charge_damage = 0;
                 *attack_counts.entry(AttackType::Charged).or_insert(0) += 1;
+                debug!("AUTO: charged hit {} for {} damage", enemy.name, dmg);
 
                 if enemy.is_defeated() {
                     xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
@@ -306,11 +365,19 @@ pub fn handle_combat(
                     combat_result = Some(CombatOutcome::Kill(handle_enemy_defeat(player, &enemy, loot_tables, xp_gains, true)));
                     break;
                 }
-                enemy.attack_player(&mut player.health);
-                msg_lines = vec![
-                    format!("You unleash a charged attack for {} damage!", dmg),
-                    format!("The {} hits you for {} damage!", enemy.name, enemy.attack),
-                ];
+                let (enemy_dmg, enemy_hit) = enemy_melee_attack(&enemy, player, &mut rng);
+                player.health -= enemy_dmg;
+                msg_lines = if enemy_hit {
+                    vec![
+                        format!("You unleash a charged attack for {} damage!", dmg),
+                        format!("The {} hits you for {} damage!", enemy.name, enemy_dmg),
+                    ]
+                } else {
+                    vec![
+                        format!("You unleash a charged attack for {} damage!", dmg),
+                        format!("The {} misses you!", enemy.name),
+                    ]
+                };
                 if player.health <= 0 {
                     xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
                     combat_result = Some(CombatOutcome::Other(handle_player_defeat(player, &enemy, true)));
@@ -319,9 +386,9 @@ pub fn handle_combat(
             } else {
                 match auto_style.as_ref().unwrap() {
                     FafAttackStyle::Main => {
-                        let dmg = main_attack(player, &mut enemy);
+                        let (dmg, hit) = melee_attack(player, &mut enemy, &mut rng);
                         *attack_counts.entry(AttackType::Main).or_insert(0) += 1;
-                        debug!("AUTO: hit {} for {} damage", enemy.name, dmg);
+                        debug!("AUTO: main attack {} — hit={} dmg={}", enemy.name, hit, dmg);
 
                         if enemy.is_defeated() {
                             xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
@@ -329,10 +396,38 @@ pub fn handle_combat(
                             combat_result = Some(CombatOutcome::Kill(handle_enemy_defeat(player, &enemy, loot_tables, xp_gains, true)));
                             break;
                         }
-                        enemy.attack_player(&mut player.health);
+                        let (enemy_dmg, enemy_hit) = enemy_melee_attack(&enemy, player, &mut rng);
+                        player.health -= enemy_dmg;
                         msg_lines = vec![
-                            format!("You hit the {} for {} damage!", enemy.name, dmg),
-                            format!("The {} hits you for {} damage!", enemy.name, enemy.attack),
+                            if hit { format!("You hit the {} for {} damage!", enemy.name, dmg) }
+                            else   { format!("You miss the {}!", enemy.name) },
+                            if enemy_hit { format!("The {} hits you for {} damage!", enemy.name, enemy_dmg) }
+                            else         { format!("The {} misses you!", enemy.name) },
+                        ];
+                        if player.health <= 0 {
+                            xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
+                            combat_result = Some(CombatOutcome::Other(handle_player_defeat(player, &enemy, true)));
+                            break;
+                        }
+                    }
+                    FafAttackStyle::Defensive => {
+                        let (dmg, hit) = melee_attack(player, &mut enemy, &mut rng);
+                        *attack_counts.entry(AttackType::Defensive).or_insert(0) += 1;
+                        debug!("AUTO: defensive attack {} — hit={} dmg={}", enemy.name, hit, dmg);
+
+                        if enemy.is_defeated() {
+                            xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
+                            let xp_gains = combat_xp_calculation(&attack_counts);
+                            combat_result = Some(CombatOutcome::Kill(handle_enemy_defeat(player, &enemy, loot_tables, xp_gains, true)));
+                            break;
+                        }
+                        let (enemy_dmg, enemy_hit) = enemy_melee_attack(&enemy, player, &mut rng);
+                        player.health -= enemy_dmg;
+                        msg_lines = vec![
+                            if hit { format!("You attack defensively, hitting for {} damage!", dmg) }
+                            else   { format!("You attack defensively but miss the {}!", enemy.name) },
+                            if enemy_hit { format!("The {} hits you for {} damage!", enemy.name, enemy_dmg) }
+                            else         { format!("The {} misses you!", enemy.name) },
                         ];
                         if player.health <= 0 {
                             xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
@@ -341,9 +436,9 @@ pub fn handle_combat(
                         }
                     }
                     FafAttackStyle::Spell => {
-                        let dmg = spell_attack(player, &mut enemy);
+                        let (dmg, hit) = spell_attack(player, &mut enemy, &mut rng);
                         *attack_counts.entry(AttackType::Magic).or_insert(0) += 1;
-                        debug!("AUTO: spell hit {} for {} damage", enemy.name, dmg);
+                        debug!("AUTO: spell {} — hit={} dmg={}", enemy.name, hit, dmg);
 
                         if enemy.is_defeated() {
                             xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
@@ -351,18 +446,14 @@ pub fn handle_combat(
                             combat_result = Some(CombatOutcome::Kill(handle_enemy_defeat(player, &enemy, loot_tables, xp_gains, true)));
                             break;
                         }
-                        enemy.attack_player(&mut player.health);
-                        msg_lines = if dmg > 0 {
-                            vec![
-                                format!("You cast a spell for {} damage!", dmg),
-                                format!("The {} hits you for {} damage!", enemy.name, enemy.attack),
-                            ]
-                        } else {
-                            vec![
-                                "No magic ability — spell fizzled!".to_string(),
-                                format!("The {} hits you for {} damage!", enemy.name, enemy.attack),
-                            ]
-                        };
+                        let (enemy_dmg, enemy_hit) = enemy_melee_attack(&enemy, player, &mut rng);
+                        player.health -= enemy_dmg;
+                        msg_lines = vec![
+                            if hit { format!("You cast a spell for {} damage!", dmg) }
+                            else   { format!("Your spell fizzles against the {}!", enemy.name) },
+                            if enemy_hit { format!("The {} hits you for {} damage!", enemy.name, enemy_dmg) }
+                            else         { format!("The {} misses you!", enemy.name) },
+                        ];
                         if player.health <= 0 {
                             xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
                             combat_result = Some(CombatOutcome::Other(handle_player_defeat(player, &enemy, true)));
@@ -370,13 +461,14 @@ pub fn handle_combat(
                         }
                     }
                     FafAttackStyle::Charged => {
-                        // Wind-up round: enemy hits, player charges
+                        // Wind-up round: enemy hits, player charges (fires next tick)
                         charging = true;
-                        charge_damage = CHARGED_DAMAGE;
-                        enemy.attack_player(&mut player.health);
+                        let (enemy_dmg, enemy_hit) = enemy_melee_attack(&enemy, player, &mut rng);
+                        player.health -= enemy_dmg;
                         msg_lines = vec![
                             "Charging a powerful attack…".to_string(),
-                            format!("The {} hits you for {} damage!", enemy.name, enemy.attack),
+                            if enemy_hit { format!("The {} hits you for {} damage!", enemy.name, enemy_dmg) }
+                            else         { format!("The {} misses you!", enemy.name) },
                         ];
                         if player.health <= 0 {
                             xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
@@ -403,10 +495,9 @@ pub fn handle_combat(
         };
 
         if charging {
-            // Any key fires the charged attack
-            let dmg = charged_attack(&mut enemy, charge_damage);
+            // Any key fires the charged attack (guaranteed hit, full max-hit)
+            let dmg = charged_attack(player, &mut enemy);
             charging = false;
-            charge_damage = 0;
             *attack_counts.entry(AttackType::Charged).or_insert(0) += 1;
             debug!("Player fired charged attack for {} damage", dmg);
 
@@ -417,11 +508,13 @@ pub fn handle_combat(
                 break;
             }
 
-            enemy.attack_player(&mut player.health);
-            debug!("{} hit player for {} damage", enemy.name, enemy.attack);
+            let (enemy_dmg, enemy_hit) = enemy_melee_attack(&enemy, player, &mut rng);
+            player.health -= enemy_dmg;
+            debug!("{} {} for {} damage", enemy.name, if enemy_hit { "hit player" } else { "missed player" }, enemy_dmg);
             msg_lines = vec![
                 format!("You unleash a charged attack for {} damage!", dmg),
-                format!("The {} hits you for {} damage!", enemy.name, enemy.attack),
+                if enemy_hit { format!("The {} hits you for {} damage!", enemy.name, enemy_dmg) }
+                else         { format!("The {} misses you!", enemy.name) },
             ];
 
             if player.health <= 0 {
@@ -433,9 +526,9 @@ pub fn handle_combat(
             match key {
                 // --- Main attack ---
                 KeyCode::Char('m') => {
-                    let dmg = main_attack(player, &mut enemy);
+                    let (dmg, hit) = melee_attack(player, &mut enemy, &mut rng);
                     *attack_counts.entry(AttackType::Main).or_insert(0) += 1;
-                    debug!("Player hit {} for {} damage", enemy.name, dmg);
+                    debug!("Player main attack {} — hit={} dmg={}", enemy.name, hit, dmg);
 
                     if enemy.is_defeated() {
                         xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
@@ -444,11 +537,44 @@ pub fn handle_combat(
                         break;
                     }
 
-                    enemy.attack_player(&mut player.health);
-                    debug!("{} hit player for {} damage", enemy.name, enemy.attack);
+                    let (enemy_dmg, enemy_hit) = enemy_melee_attack(&enemy, player, &mut rng);
+                    player.health -= enemy_dmg;
+                    debug!("{} {} for {} damage", enemy.name, if enemy_hit { "hit player" } else { "missed player" }, enemy_dmg);
                     msg_lines = vec![
-                        format!("You hit the {} for {} damage!", enemy.name, dmg),
-                        format!("The {} hits you for {} damage!", enemy.name, enemy.attack),
+                        if hit { format!("You hit the {} for {} damage!", enemy.name, dmg) }
+                        else   { format!("You miss the {}!", enemy.name) },
+                        if enemy_hit { format!("The {} hits you for {} damage!", enemy.name, enemy_dmg) }
+                        else         { format!("The {} misses you!", enemy.name) },
+                    ];
+
+                    if player.health <= 0 {
+                        xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
+                        combat_result = Some(CombatOutcome::Other(handle_player_defeat(player, &enemy, false)));
+                        break;
+                    }
+                }
+
+                // --- Defensive attack ---
+                KeyCode::Char('d') => {
+                    let (dmg, hit) = melee_attack(player, &mut enemy, &mut rng);
+                    *attack_counts.entry(AttackType::Defensive).or_insert(0) += 1;
+                    debug!("Player defensive attack {} — hit={} dmg={}", enemy.name, hit, dmg);
+
+                    if enemy.is_defeated() {
+                        xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
+                        let xp_gains = combat_xp_calculation(&attack_counts);
+                        combat_result = Some(CombatOutcome::Kill(handle_enemy_defeat(player, &enemy, loot_tables, xp_gains, false)));
+                        break;
+                    }
+
+                    let (enemy_dmg, enemy_hit) = enemy_melee_attack(&enemy, player, &mut rng);
+                    player.health -= enemy_dmg;
+                    debug!("{} {} for {} damage", enemy.name, if enemy_hit { "hit player" } else { "missed player" }, enemy_dmg);
+                    msg_lines = vec![
+                        if hit { format!("You attack defensively, hitting for {} damage!", dmg) }
+                        else   { format!("You attack defensively but miss the {}!", enemy.name) },
+                        if enemy_hit { format!("The {} hits you for {} damage!", enemy.name, enemy_dmg) }
+                        else         { format!("The {} misses you!", enemy.name) },
                     ];
 
                     if player.health <= 0 {
@@ -461,12 +587,13 @@ pub fn handle_combat(
                 // --- Charged attack (wind-up round) ---
                 KeyCode::Char('c') => {
                     charging = true;
-                    charge_damage = CHARGED_DAMAGE;
-                    enemy.attack_player(&mut player.health);
-                    debug!("{} hit player for {} damage", enemy.name, enemy.attack);
+                    let (enemy_dmg, enemy_hit) = enemy_melee_attack(&enemy, player, &mut rng);
+                    player.health -= enemy_dmg;
+                    debug!("{} {} for {} damage", enemy.name, if enemy_hit { "hit player" } else { "missed player" }, enemy_dmg);
                     msg_lines = vec![
                         "You begin charging a powerful attack...".to_string(),
-                        format!("The {} hits you for {} damage!", enemy.name, enemy.attack),
+                        if enemy_hit { format!("The {} hits you for {} damage!", enemy.name, enemy_dmg) }
+                        else         { format!("The {} misses you!", enemy.name) },
                     ];
 
                     if player.health <= 0 {
@@ -478,9 +605,9 @@ pub fn handle_combat(
 
                 // --- Spell attack ---
                 KeyCode::Char('s') => {
-                    let dmg = spell_attack(player, &mut enemy);
+                    let (dmg, hit) = spell_attack(player, &mut enemy, &mut rng);
                     *attack_counts.entry(AttackType::Magic).or_insert(0) += 1;
-                    debug!("Player cast spell on {} for {} damage", enemy.name, dmg);
+                    debug!("Player spell {} — hit={} dmg={}", enemy.name, hit, dmg);
 
                     if enemy.is_defeated() {
                         xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
@@ -489,20 +616,15 @@ pub fn handle_combat(
                         break;
                     }
 
-                    enemy.attack_player(&mut player.health);
-                    debug!("{} hit player for {} damage", enemy.name, enemy.attack);
-
-                    if dmg > 0 {
-                        msg_lines = vec![
-                            format!("You cast a spell for {} damage!", dmg),
-                            format!("The {} hits you for {} damage!", enemy.name, enemy.attack),
-                        ];
-                    } else {
-                        msg_lines = vec![
-                            "You lack the magic ability to cast spells!".to_string(),
-                            format!("The {} hits you for {} damage!", enemy.name, enemy.attack),
-                        ];
-                    }
+                    let (enemy_dmg, enemy_hit) = enemy_melee_attack(&enemy, player, &mut rng);
+                    player.health -= enemy_dmg;
+                    debug!("{} {} for {} damage", enemy.name, if enemy_hit { "hit player" } else { "missed player" }, enemy_dmg);
+                    msg_lines = vec![
+                        if hit { format!("You cast a spell for {} damage!", dmg) }
+                        else   { format!("Your spell fizzles against the {}!", enemy.name) },
+                        if enemy_hit { format!("The {} hits you for {} damage!", enemy.name, enemy_dmg) }
+                        else         { format!("The {} misses you!", enemy.name) },
+                    ];
 
                     if player.health <= 0 {
                         xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
@@ -531,11 +653,13 @@ pub fn handle_combat(
                         break;
                     }
 
-                    enemy.attack_player(&mut player.health);
-                    debug!("{} hit player for {} damage", enemy.name, enemy.attack);
+                    let (enemy_dmg, enemy_hit) = enemy_melee_attack(&enemy, player, &mut rng);
+                    player.health -= enemy_dmg;
+                    debug!("{} {} for {} damage", enemy.name, if enemy_hit { "hit player" } else { "missed player" }, enemy_dmg);
                     msg_lines = vec![
                         "You failed to escape!".to_string(),
-                        format!("The {} hits you for {} damage!", enemy.name, enemy.attack),
+                        if enemy_hit { format!("The {} hits you for {} damage!", enemy.name, enemy_dmg) }
+                        else         { format!("The {} misses you!", enemy.name) },
                     ];
 
                     if player.health <= 0 {
