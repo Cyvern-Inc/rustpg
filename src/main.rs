@@ -2,6 +2,7 @@ mod actions;
 mod combat;
 mod cooking;
 mod dialogue;
+mod dungeon;
 mod enemy;
 mod fishing;
 mod gathering;
@@ -18,6 +19,7 @@ mod woodcutting;
 use crate::actions::ActionEntry;
 use crate::combat::{handle_combat, CombatOutcome, FafAttackStyle, AUTO_COMBAT_STOPPED};
 use crate::dialogue::run_dialogue;
+use crate::dungeon::{DungeonInstance, DungeonSize, DungeonState};
 use crate::npc::{resolve_interaction, InteractionAction};
 use crate::gathering::{bfs_toward_nearest_reachable, find_adjacent_tile, find_nearest_tile, weights_toward};
 use crate::inventory::display_and_handle_inventory;
@@ -56,6 +58,8 @@ struct CharacterSave {
     game_map: Map,
     character_name: String,
     current_map: String,
+    #[serde(default)]
+    dungeon_state: DungeonState,
 }
 
 // ====================//
@@ -219,10 +223,11 @@ fn new_game(version: &str, build_number: &str) {
         game_map.campfire_x = game_map.player_x;
         game_map.campfire_y = game_map.player_y + 1;
         game_map.set_tile(game_map.campfire_x, game_map.campfire_y, Tile::Campfire);
-        save_game(&player, &game_map, &save_folder, &sanitized_name);
+        save_game(&player, &game_map, &DungeonState::default(), &save_folder, &sanitized_name);
         game_loop(
             player,
             game_map,
+            DungeonState::default(),
             save_folder.to_path_buf(),
             sanitized_name,
         );
@@ -533,20 +538,38 @@ fn load_game(save_folder: &Path) {
     map_data.clear_player_positions();
     map_data.set_tile(px, py, Tile::Player);
 
+    // Load dungeon tile grids from flat files
+    let mut dungeon_state = character_data.dungeon_state;
+    for (key, instance) in dungeon_state.instances.iter_mut() {
+        let fname = format!("dungeon_{}.txt", key.replace(',', "_"));
+        let path = save_folder.join(&fname);
+        if let Ok(data) = fs::read_to_string(&path) {
+            instance.map.load_tiles(&data);
+        }
+    }
+
     game_loop(
         player,
         map_data,
+        dungeon_state,
         save_folder.to_path_buf(),
         character_data.character_name,
     );
 }
 
-fn save_game(player: &Player, game_map: &Map, save_folder: &Path, character_name: &str) {
+fn save_game(
+    player: &Player,
+    game_map: &Map,
+    dungeon_state: &DungeonState,
+    save_folder: &Path,
+    character_name: &str,
+) {
     let character_save = CharacterSave {
         player: player.clone(),
         game_map: game_map.clone(),
         character_name: character_name.to_string(),
         current_map: save_folder.join("map.txt").to_string_lossy().into_owned(),
+        dungeon_state: dungeon_state.clone(),
     };
 
     let character_save_path = save_folder.join("character.json");
@@ -557,8 +580,14 @@ fn save_game(player: &Player, game_map: &Map, save_folder: &Path, character_name
     .expect("Failed to write character file");
 
     let map_save_path = save_folder.join("map.txt");
-    let serialized_map = game_map.serialize_map();
-    fs::write(&map_save_path, serialized_map).expect("Failed to write map file");
+    fs::write(&map_save_path, game_map.serialize_map()).expect("Failed to write map file");
+
+    // Write each dungeon's tile grid to its own flat file
+    for (key, instance) in &dungeon_state.instances {
+        let fname = format!("dungeon_{}.txt", key.replace(',', "_"));
+        let path = save_folder.join(&fname);
+        fs::write(&path, instance.map.serialize_tiles()).expect("Failed to write dungeon file");
+    }
 }
 
 /// Push an entry into the recent-actions queue, merging with the previous
@@ -745,6 +774,12 @@ fn handle_faf_loop(
             Direction::Left  => (game_map.player_x.saturating_sub(1), game_map.player_y),
             Direction::Right => ((game_map.player_x + 1).min(game_map.width - 1), game_map.player_y),
         };
+
+        // Skip dungeon entrances during FAF navigation
+        if game_map.tiles[target_y][target_x] == Tile::DungeonEntrance {
+            thread::sleep(Duration::from_millis(FAF_MOVE_TICK_MS));
+            continue 'faf;
+        }
 
         if game_map.tiles[target_y][target_x] == Tile::Enemy {
             if let Some(idx) = game_map.npcs.iter().position(|n| n.x == target_x && n.y == target_y) {
@@ -1076,9 +1111,633 @@ fn execute_command(
     }
 }
 
+// ---------------------------------------------------------------------------
+// Dungeon entrance / loop helpers
+// ---------------------------------------------------------------------------
+
+/// Compute the tile coordinate the player would move to in the given direction.
+fn compute_target(
+    direction: Direction,
+    px: usize,
+    py: usize,
+    w: usize,
+    h: usize,
+) -> (usize, usize) {
+    match direction {
+        Direction::Up    => (px, py.saturating_sub(1)),
+        Direction::Down  => (px, (py + 1).min(h - 1)),
+        Direction::Left  => (px.saturating_sub(1), py),
+        Direction::Right => ((px + 1).min(w - 1), py),
+    }
+}
+
+/// Wrapper around `try_move_player` that intercepts `DungeonEntrance` tiles
+/// and launches the dungeon discovery/loop flow.
+/// Returns `true` if the game should quit (player quit from inside dungeon).
+fn handle_movement(
+    direction: Direction,
+    player: &mut Player,
+    game_map: &mut Map,
+    dungeon_state: &mut DungeonState,
+    rng: &mut impl Rng,
+    recent_actions: &mut VecDeque<ActionEntry>,
+) -> bool {
+    let (tx, ty) = compute_target(direction, game_map.player_x, game_map.player_y,
+                                  game_map.width, game_map.height);
+
+    if game_map.tiles[ty][tx] == Tile::DungeonEntrance {
+        xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
+        let entered = handle_dungeon_discovery(tx, ty, player, game_map, dungeon_state, rng);
+        let should_quit = if entered {
+            matches!(
+                run_dungeon_loop(player, game_map, dungeon_state, rng, recent_actions),
+                DungeonExitReason::Quit
+            )
+        } else {
+            false
+        };
+        xterm_terminal::enable_raw_mode().expect("Failed to enable raw mode");
+        if !should_quit {
+            push_action(recent_actions, ActionEntry::Generic(
+                "You examine a dungeon entrance.".to_string(), 1,
+            ));
+        }
+        return should_quit;
+    }
+
+    let (maybe_action, raw_disabled) = try_move_player(direction, player, game_map, rng);
+    if let Some(action) = maybe_action { push_action(recent_actions, action); }
+    if raw_disabled {
+        xterm_terminal::enable_raw_mode().expect("Failed to enable raw mode");
+    }
+    false
+}
+
+/// Show the dungeon discovery prompt. Generates the instance on first entry.
+/// Returns `true` if the player chose to enter.
+fn handle_dungeon_discovery(
+    entrance_x: usize,
+    entrance_y: usize,
+    player: &mut Player,
+    game_map: &Map,
+    dungeon_state: &mut DungeonState,
+    rng: &mut impl Rng,
+) -> bool {
+    let key = DungeonState::dungeon_key(entrance_x, entrance_y);
+
+    // Look up entrance metadata from the overworld map
+    let (tier, size_name, status) = if let Some(entry) =
+        game_map.dungeon_entrances.iter().find(|e| e.x == entrance_x && e.y == entrance_y)
+    {
+        let status = if dungeon_state.instances.contains_key(&key) {
+            "Visited"
+        } else {
+            "Unexplored"
+        };
+        (entry.tier, entry.size.display_name(), status)
+    } else {
+        (1u32, "Small", "Unexplored")
+    };
+
+    // Render discovery box
+    print!("\x1B[2J\x1B[1;1H");
+    io::stdout().flush().unwrap();
+    println!();
+    println!("  ╔══════════════════════════════════════╗");
+    println!("  ║   [ You discovered a Dungeon! ]      ║");
+    println!("  ╠══════════════════════════════════════╣");
+    println!("  ║  Tier: {} (Expected Level ~{}){}║", tier, tier,
+             " ".repeat(22usize.saturating_sub(format!("Tier: {} (Expected Level ~{})", tier, tier).len())));
+    println!("  ║  Size: {}{}║", size_name,
+             " ".repeat(34usize.saturating_sub(format!("Size: {}", size_name).len())));
+    println!("  ║  Status: {}{}║", status,
+             " ".repeat(32usize.saturating_sub(format!("Status: {}", status).len())));
+    println!("  ╠══════════════════════════════════════╣");
+    println!("  ║  Do you wish to enter? [Y/N]:        ║");
+    println!("  ╚══════════════════════════════════════╝");
+    io::stdout().flush().unwrap();
+
+    let mut answer = String::new();
+    let _ = io::stdin().read_line(&mut answer);
+
+    if !answer.trim().eq_ignore_ascii_case("y") {
+        return false;
+    }
+
+    // Generate dungeon on first entry
+    if !dungeon_state.instances.contains_key(&key) {
+        let size = game_map.dungeon_entrances
+            .iter().find(|e| e.x == entrance_x && e.y == entrance_y)
+            .map(|e| e.size.clone())
+            .unwrap_or(DungeonSize::Small);
+
+        let instance = DungeonInstance::generate(
+            &key, tier, size, game_map.width, game_map.height, rng,
+        );
+        dungeon_state.instances.insert(key.clone(), instance);
+    }
+
+    // Set up dungeon state
+    let spawn_x = dungeon_state.instances[&key].map.spawn_x;
+    let spawn_y = dungeon_state.instances[&key].map.spawn_y;
+    dungeon_state.return_x = Some(game_map.player_x);
+    dungeon_state.return_y = Some(game_map.player_y);
+    dungeon_state.active_dungeon = Some(key);
+    dungeon_state.dungeon_player_x = spawn_x;
+    dungeon_state.dungeon_player_y = spawn_y;
+
+    // Mark instance as explored
+    if let Some(key_ref) = &dungeon_state.active_dungeon.clone() {
+        if let Some(inst) = dungeon_state.instances.get_mut(key_ref) {
+            inst.explored = true;
+        }
+    }
+
+    println!("\n  You descend into the darkness...");
+    io::stdout().flush().unwrap();
+    thread::sleep(Duration::from_millis(800));
+    true
+}
+
+/// Build the dungeon walk-mode frame string (mirrors `build_walk_frame`).
+fn build_dungeon_walk_frame(
+    dungeon_state: &DungeonState,
+    recent_actions: &VecDeque<ActionEntry>,
+    command_history: &VecDeque<String>,
+    input_buffer: &str,
+    in_input_mode: bool,
+) -> String {
+    let key = match &dungeon_state.active_dungeon {
+        Some(k) => k.clone(),
+        None    => return String::new(),
+    };
+    let instance = match dungeon_state.instances.get(&key) {
+        Some(i) => i,
+        None    => return String::new(),
+    };
+
+    let mut out = String::new();
+    out.push_str("\x1B[2J\x1B[1;1H");
+
+    let (term_w, term_h) = term_size::dimensions().unwrap_or((80, 24));
+    let h_radius = (term_w.saturating_sub(52) / 4).clamp(5, 40);
+    let v_radius = (term_h.saturating_sub(7) / 2).clamp(5, 40);
+
+    out.push_str("[DUNGEON]  wasd = move  |  Enter = command\r\n\r\n");
+
+    let map_str = instance.map.render_viewport(
+        dungeon_state.dungeon_player_x, dungeon_state.dungeon_player_y, h_radius, v_radius,
+    );
+    let map_lines: Vec<&str> = map_str.lines().collect();
+    let map_height = map_lines.len();
+    let max_recent = if map_height > 1 { map_height - 1 } else { 0 };
+
+    let sidebar_w = term_w.saturating_sub((2 * h_radius + 1) * 2 + 4).max(10);
+    let mut all_lines: Vec<String> = Vec::new();
+    for entry in recent_actions {
+        for line in entry.format_for_sidebar() {
+            all_lines.extend(wrap_text(&line, sidebar_w));
+        }
+    }
+    let mut info_lines: Vec<String> = vec!["Recent Actions:".to_string()];
+    let skip = all_lines.len().saturating_sub(max_recent);
+    for line in &all_lines[skip..] {
+        info_lines.push(line.clone());
+    }
+    if max_recent > 0 {
+        while info_lines.len() <= max_recent {
+            info_lines.push(ACTIONS_FEED_SEPARATOR.to_string());
+        }
+    }
+
+    let map_width = map_lines.iter().map(|l| l.len()).max().unwrap_or(0);
+    let max_rows = map_lines.len().max(info_lines.len());
+    for i in 0..max_rows {
+        let map_part  = if i < map_lines.len()  { map_lines[i] }           else { "" };
+        let info_part = if i < info_lines.len() { info_lines[i].as_str() } else { "" };
+        out.push_str(&format!("{:<width$}    {}\r\n", map_part, info_part, width = map_width));
+    }
+
+    // Command box
+    let inner = term_w.saturating_sub(2).max(4);
+    let content_w = inner.saturating_sub(3).max(1);
+    if in_input_mode {
+        let title = " Command ";
+        let right = inner.saturating_sub(2 + title.len());
+        out.push_str(&format!("╔{}{}{}╗\r\n", "═".repeat(2), title, "═".repeat(right)));
+        if let Some(prev) = command_history.iter().next_back() {
+            let s = truncate_to(prev, content_w);
+            out.push_str(&format!("║  {:<w$}║\r\n", s, w = content_w));
+        } else {
+            out.push_str(&format!("║{:<w$}║\r\n", "", w = inner));
+        }
+        let cursor = format!("> {}_", input_buffer);
+        let cursor_display = truncate_start_to(&cursor, content_w);
+        out.push_str(&format!("║  {:<w$}║\r\n", cursor_display, w = content_w));
+        out.push_str(&format!("╚{}╝\r\n", "═".repeat(inner)));
+    } else {
+        out.push_str(&format!("╔{}╗\r\n", "═".repeat(inner)));
+        let hint = "  Press Enter to open the command input.";
+        out.push_str(&format!("║{:<w$}║\r\n", hint, w = inner));
+        out.push_str(&format!("║{:<w$}║\r\n", "", w = inner));
+        out.push_str(&format!("╚{}╝\r\n", "═".repeat(inner)));
+    }
+
+    out
+}
+
+/// Combat inside a dungeon. Uses `handle_combat` directly so the caller can
+/// detect player death and exit the dungeon, rather than silently respawning.
+/// Raw mode must be OFF before calling; it is NOT changed by this function.
+/// Returns `(action_entry, player_died)`.
+/// Returns `(action_entry, player_died, faf_stopped)`.
+fn dungeon_combat(
+    player: &mut Player,
+    overworld_map: &mut Map,
+    enemy: Enemy,
+    attack_style: Option<FafAttackStyle>,
+) -> (ActionEntry, bool, bool) {
+    player.in_combat = true;
+    let outcome = handle_combat(player, enemy, get_loot_tables(), attack_style);
+    player.in_combat = false;
+
+    if player.health <= 0 {
+        println!("\nYou have been defeated and are forced out of the dungeon!");
+        println!("Press Enter to continue...");
+        let _ = io::stdin().read_line(&mut String::new());
+        player.respawn(overworld_map);
+        return (ActionEntry::Generic("Defeated — respawned at campfire.".to_string(), 1), true, false);
+    }
+
+    let faf_stopped = matches!(&outcome, CombatOutcome::Other(s) if s == AUTO_COMBAT_STOPPED);
+    let action = match outcome {
+        CombatOutcome::Kill(kill) => ActionEntry::Kill(kill),
+        CombatOutcome::Other(s)   => ActionEntry::Generic(s, 1),
+    };
+    (action, false, faf_stopped)
+}
+
+/// Whether the dungeon loop exited due to quitting the entire game.
+enum DungeonExitReason {
+    Exit,
+    Death,
+    Quit,
+}
+
+/// AFK auto-combat loop for inside a dungeon. Mirrors `handle_faf_loop` but
+/// operates on dungeon NPCs and the dungeon map. Returns `Some(reason)` when
+/// the dungeon loop should terminate (death), or `None` when FAF stops normally.
+/// Raw mode is disabled before returning in all cases.
+fn handle_dungeon_faf_loop(
+    player: &mut Player,
+    overworld_map: &mut Map,
+    dungeon_state: &mut DungeonState,
+    rng: &mut impl Rng,
+    recent_actions: &mut VecDeque<ActionEntry>,
+    attack_style: FafAttackStyle,
+) -> Option<DungeonExitReason> {
+    use crate::dungeon::DungeonTile;
+
+    xterm_terminal::enable_raw_mode().expect("Failed to enable raw mode");
+
+    let result = 'faf: loop {
+        let frame = build_dungeon_walk_frame(
+            dungeon_state, recent_actions, &VecDeque::new(), "", false,
+        );
+        print!("{}", frame);
+        io::stdout().flush().unwrap();
+
+        if let Some(k) = check_for_input() {
+            if k == "q" || k == "x" {
+                push_action(recent_actions, ActionEntry::Generic("FAF mode stopped.".to_string(), 1));
+                break 'faf None;
+            }
+        }
+
+        let key_str = match &dungeon_state.active_dungeon {
+            Some(k) => k.clone(),
+            None => break 'faf None,
+        };
+        let px = dungeon_state.dungeon_player_x;
+        let py = dungeon_state.dungeon_player_y;
+        let (dw, dh) = {
+            let m = &dungeon_state.instances[&key_str].map;
+            (m.width, m.height)
+        };
+
+        // Fight any adjacent enemy first
+        let adj = {
+            let inst = &dungeon_state.instances[&key_str];
+            [(px, py.wrapping_sub(1)), (px, py+1), (px.wrapping_sub(1), py), (px+1, py)]
+                .into_iter()
+                .find(|&(x, y)| {
+                    x < dw && y < dh
+                        && inst.map.tiles[y][x] == DungeonTile::Enemy
+                        && inst.npcs.iter().any(|n| n.x == x && n.y == y && !n.dead)
+                })
+        };
+
+        if let Some((ex, ey)) = adj {
+            let idx = dungeon_state.instances[&key_str].npcs
+                .iter().position(|n| n.x == ex && n.y == ey && !n.dead);
+            if let Some(npc_idx) = idx {
+                let enemy = dungeon_state.instances[&key_str].npcs[npc_idx].to_enemy();
+                dungeon_state.instances.get_mut(&key_str).unwrap().npcs[npc_idx].dead = true;
+                dungeon_state.instances.get_mut(&key_str).unwrap().map.tiles[ey][ex] = DungeonTile::Floor;
+
+                xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
+                let (entry, died, faf_stopped) = dungeon_combat(player, overworld_map, enemy, Some(attack_style.clone()));
+                if died { push_action(recent_actions, entry); break 'faf Some(DungeonExitReason::Death); }
+                if faf_stopped { push_action(recent_actions, entry); break 'faf None; }
+                xterm_terminal::enable_raw_mode().expect("Failed to enable raw mode");
+                push_action(recent_actions, entry);
+                continue 'faf;
+            }
+        }
+
+        // BFS toward nearest enemy
+        let direction = dungeon_state.instances[&key_str]
+            .bfs_toward_nearest_enemy(px, py)
+            .unwrap_or_else(|| {
+                let choices = [Direction::Up, Direction::Down, Direction::Left, Direction::Right];
+                choices[rng.gen_range(0..4)]
+            });
+
+        let (tx, ty) = compute_target(direction, px, py, dw, dh);
+        let target_tile = dungeon_state.instances[&key_str].map.tiles[ty][tx];
+
+        if target_tile == DungeonTile::Enemy {
+            let idx = dungeon_state.instances[&key_str].npcs
+                .iter().position(|n| n.x == tx && n.y == ty && !n.dead);
+            if let Some(npc_idx) = idx {
+                let enemy = dungeon_state.instances[&key_str].npcs[npc_idx].to_enemy();
+                dungeon_state.instances.get_mut(&key_str).unwrap().npcs[npc_idx].dead = true;
+                dungeon_state.instances.get_mut(&key_str).unwrap().map.tiles[ty][tx] = DungeonTile::Floor;
+
+                xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
+                let (entry, died, faf_stopped) = dungeon_combat(player, overworld_map, enemy, Some(attack_style.clone()));
+                if died { push_action(recent_actions, entry); break 'faf Some(DungeonExitReason::Death); }
+                if faf_stopped { push_action(recent_actions, entry); break 'faf None; }
+                xterm_terminal::enable_raw_mode().expect("Failed to enable raw mode");
+                push_action(recent_actions, entry);
+                continue 'faf;
+            }
+        } else if target_tile == DungeonTile::Exit {
+            // Don't walk out of the dungeon during FAF — wander instead
+        } else if target_tile.is_passable() {
+            dungeon_state.dungeon_player_x = tx;
+            dungeon_state.dungeon_player_y = ty;
+            dungeon_state.dungeon_move_count += 1;
+
+            if dungeon_state.dungeon_move_count % 2 == 0 {
+                let npx = dungeon_state.dungeon_player_x;
+                let npy = dungeon_state.dungeon_player_y;
+                if let Some(inst) = dungeon_state.instances.get_mut(&key_str) {
+                    if let Some(npc_idx) = inst.update_npcs(npx, npy, rng) {
+                        let npc_x = inst.npcs[npc_idx].x;
+                        let npc_y = inst.npcs[npc_idx].y;
+                        let enemy = inst.npcs[npc_idx].to_enemy();
+                        inst.npcs[npc_idx].dead = true;
+                        inst.map.tiles[npc_y][npc_x] = DungeonTile::Floor;
+
+                        xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
+                        let (entry, died, faf_stopped) = dungeon_combat(player, overworld_map, enemy, Some(attack_style.clone()));
+                        if died { push_action(recent_actions, entry); break 'faf Some(DungeonExitReason::Death); }
+                        if faf_stopped { push_action(recent_actions, entry); break 'faf None; }
+                        xterm_terminal::enable_raw_mode().expect("Failed to enable raw mode");
+                        push_action(recent_actions, entry);
+                        continue 'faf;
+                    }
+                }
+            }
+        }
+
+        thread::sleep(Duration::from_millis(FAF_MOVE_TICK_MS));
+    };
+
+    xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
+    result
+}
+
+/// Main dungeon exploration loop. Mirrors `game_loop` but operates on a
+/// `DungeonMap`. Returns when the player exits, dies, or quits.
+fn run_dungeon_loop(
+    player: &mut Player,
+    overworld_map: &mut Map,
+    dungeon_state: &mut DungeonState,
+    rng: &mut impl Rng,
+    recent_actions: &mut VecDeque<ActionEntry>,
+) -> DungeonExitReason {
+    let mut command_history: VecDeque<String> = VecDeque::new();
+    let mut input_buffer = String::new();
+    let mut in_input_mode = false;
+
+    xterm_terminal::enable_raw_mode().expect("Failed to enable raw mode");
+
+    let exit_reason = 'dungeon: loop {
+        let frame = build_dungeon_walk_frame(
+            dungeon_state, recent_actions, &command_history, &input_buffer, in_input_mode,
+        );
+        print!("{}", frame);
+        io::stdout().flush().unwrap();
+
+        match xterm_event::read().expect("Failed to read input") {
+            Event::Key(ke) => match ke.code {
+                KeyCode::Char('w') if !in_input_mode => {
+                    if let Some(r) = dungeon_move(Direction::Up, player, overworld_map,
+                                                  dungeon_state, rng, recent_actions) {
+                        break 'dungeon r;
+                    }
+                }
+                KeyCode::Char('s') if !in_input_mode => {
+                    if let Some(r) = dungeon_move(Direction::Down, player, overworld_map,
+                                                  dungeon_state, rng, recent_actions) {
+                        break 'dungeon r;
+                    }
+                }
+                KeyCode::Char('a') if !in_input_mode => {
+                    if let Some(r) = dungeon_move(Direction::Left, player, overworld_map,
+                                                  dungeon_state, rng, recent_actions) {
+                        break 'dungeon r;
+                    }
+                }
+                KeyCode::Char('d') if !in_input_mode => {
+                    if let Some(r) = dungeon_move(Direction::Right, player, overworld_map,
+                                                  dungeon_state, rng, recent_actions) {
+                        break 'dungeon r;
+                    }
+                }
+                KeyCode::Enter => {
+                    if !in_input_mode {
+                        in_input_mode = true;
+                    } else {
+                        let cmd = input_buffer.trim().to_lowercase().to_string();
+                        input_buffer.clear();
+                        in_input_mode = false;
+                        if cmd.is_empty() { continue 'dungeon; }
+
+                        command_history.push_back(cmd.clone());
+                        xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
+                        print!("\x1B[2J\x1B[1;1H");
+                        io::stdout().flush().unwrap();
+
+                        // FAF manages its own raw mode
+                        if (cmd == "faf" || cmd.starts_with("faf ")) && !player.in_combat {
+                            let style = match cmd.trim_start_matches("faf").trim() {
+                                "spell"     => FafAttackStyle::Spell,
+                                "charged"   => FafAttackStyle::Charged,
+                                "defensive" => FafAttackStyle::Defensive,
+                                _           => FafAttackStyle::Main,
+                            };
+                            if let Some(reason) = handle_dungeon_faf_loop(
+                                player, overworld_map, dungeon_state, rng, recent_actions, style,
+                            ) {
+                                break 'dungeon reason;
+                            }
+                            xterm_terminal::enable_raw_mode().expect("Failed to enable raw mode");
+                            continue 'dungeon;
+                        }
+
+                        match cmd.as_str() {
+                            "status" => { player.display_status(); }
+                            "i" | "inventory" => {
+                                display_and_handle_inventory(player, None, None);
+                            }
+                            "q" | "quit" => {
+                                xterm_terminal::enable_raw_mode().expect("...");
+                                break 'dungeon DungeonExitReason::Quit;
+                            }
+                            "gather" | "gather wood" | "gather fish" | "gather stone"
+                            | "cut" | "fish" | "talk" => {
+                                println!("There is nothing to interact with here.");
+                                println!("Press Enter to continue...");
+                                let _ = io::stdin().read_line(&mut String::new());
+                            }
+                            _ => {
+                                println!("Unknown command: '{}'", cmd);
+                                println!("Press Enter to continue...");
+                                let _ = io::stdin().read_line(&mut String::new());
+                            }
+                        }
+                        xterm_terminal::enable_raw_mode().expect("Failed to enable raw mode");
+                    }
+                }
+                KeyCode::Esc => {
+                    in_input_mode = false;
+                    input_buffer.clear();
+                }
+                KeyCode::Backspace if in_input_mode => { input_buffer.pop(); }
+                KeyCode::Char(c) if in_input_mode   => { input_buffer.push(c); }
+                _ => {}
+            },
+            _ => {}
+        }
+    };
+
+    xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
+
+    // Restore overworld position on exit/death
+    if !matches!(exit_reason, DungeonExitReason::Quit) {
+        // player.respawn already handled for Death; Exit needs coord restore
+    }
+    // Clear active dungeon
+    dungeon_state.active_dungeon = None;
+
+    exit_reason
+}
+
+/// One movement step inside the dungeon. Returns `Some(reason)` when the loop
+/// should terminate (exit tile, death, quit).
+fn dungeon_move(
+    direction: Direction,
+    player: &mut Player,
+    overworld_map: &mut Map,
+    dungeon_state: &mut DungeonState,
+    rng: &mut impl Rng,
+    recent_actions: &mut VecDeque<ActionEntry>,
+) -> Option<DungeonExitReason> {
+    let key = dungeon_state.active_dungeon.clone()?;
+    let px = dungeon_state.dungeon_player_x;
+    let py = dungeon_state.dungeon_player_y;
+    let (w, h) = {
+        let m = &dungeon_state.instances[&key].map;
+        (m.width, m.height)
+    };
+
+    let (tx, ty) = compute_target(direction, px, py, w, h);
+    if tx == px && ty == py { return None; }
+
+    let target_tile = dungeon_state.instances[&key].map.tiles[ty][tx];
+
+    match target_tile {
+        crate::dungeon::DungeonTile::Exit => {
+            if let (Some(rx), Some(ry)) = (dungeon_state.return_x, dungeon_state.return_y) {
+                overworld_map.player_x = rx;
+                overworld_map.player_y = ry;
+                overworld_map.tiles[ry][rx] = Tile::Player;
+            }
+            push_action(recent_actions,
+                ActionEntry::Generic("You emerge from the dungeon.".to_string(), 1));
+            return Some(DungeonExitReason::Exit);
+        }
+        crate::dungeon::DungeonTile::Enemy => {
+            let npc_opt = dungeon_state.instances[&key].npcs
+                .iter().position(|n| n.x == tx && n.y == ty && !n.dead);
+            if let Some(npc_idx) = npc_opt {
+                let enemy = dungeon_state.instances[&key].npcs[npc_idx].to_enemy();
+                dungeon_state.instances.get_mut(&key).unwrap().npcs[npc_idx].dead = true;
+                dungeon_state.instances.get_mut(&key).unwrap().map.tiles[ty][tx] =
+                    crate::dungeon::DungeonTile::Floor;
+                xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
+                let (entry, died, _) = dungeon_combat(player, overworld_map, enemy, None);
+                if died {
+                    push_action(recent_actions, entry);
+                    return Some(DungeonExitReason::Death);
+                }
+                xterm_terminal::enable_raw_mode().expect("Failed to enable raw mode");
+                push_action(recent_actions, entry);
+            }
+            None
+        }
+        t if t.is_passable() => {
+            dungeon_state.dungeon_player_x = tx;
+            dungeon_state.dungeon_player_y = ty;
+            dungeon_state.dungeon_move_count += 1;
+            push_action(recent_actions,
+                ActionEntry::Generic(format!("Moved {:?}", direction), 1));
+
+            // Tick NPCs every 2 player steps
+            if dungeon_state.dungeon_move_count % 2 == 0 {
+                let new_px = dungeon_state.dungeon_player_x;
+                let new_py = dungeon_state.dungeon_player_y;
+                if let Some(inst) = dungeon_state.instances.get_mut(&key) {
+                    if let Some(npc_idx) = inst.update_npcs(new_px, new_py, rng) {
+                        let npc_x = inst.npcs[npc_idx].x;
+                        let npc_y = inst.npcs[npc_idx].y;
+                        let enemy = inst.npcs[npc_idx].to_enemy();
+                        inst.npcs[npc_idx].dead = true;
+                        inst.map.tiles[npc_y][npc_x] = crate::dungeon::DungeonTile::Floor;
+                        xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
+                        let (entry, died, _) = dungeon_combat(player, overworld_map, enemy, None);
+                        if died {
+                            push_action(recent_actions, entry);
+                            return Some(DungeonExitReason::Death);
+                        }
+                        xterm_terminal::enable_raw_mode().expect("Failed to enable raw mode");
+                        push_action(recent_actions, entry);
+                    }
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
 fn game_loop(
     mut player: Player,
     mut game_map: Map,
+    mut dungeon_state: DungeonState,
     save_folder: PathBuf,
     character_name: String,
 ) {
@@ -1108,35 +1767,35 @@ fn game_loop(
             Event::Key(ke) => match ke.code {
                 // Movement — only active outside input mode
                 KeyCode::Char('w') if !in_input_mode => {
-                    let (maybe_action, raw_disabled) =
-                        try_move_player(Direction::Up, &mut player, &mut game_map, &mut rng);
-                    if let Some(action) = maybe_action { push_action(&mut recent_actions, action); }
-                    if raw_disabled {
-                        xterm_terminal::enable_raw_mode().expect("Failed to enable raw mode");
+                    if handle_movement(Direction::Up, &mut player, &mut game_map,
+                                       &mut dungeon_state, &mut rng, &mut recent_actions) {
+                        xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
+                        save_game(&player, &game_map, &dungeon_state, &save_folder, &character_name);
+                        break 'main;
                     }
                 }
                 KeyCode::Char('s') if !in_input_mode => {
-                    let (maybe_action, raw_disabled) =
-                        try_move_player(Direction::Down, &mut player, &mut game_map, &mut rng);
-                    if let Some(action) = maybe_action { push_action(&mut recent_actions, action); }
-                    if raw_disabled {
-                        xterm_terminal::enable_raw_mode().expect("Failed to enable raw mode");
+                    if handle_movement(Direction::Down, &mut player, &mut game_map,
+                                       &mut dungeon_state, &mut rng, &mut recent_actions) {
+                        xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
+                        save_game(&player, &game_map, &dungeon_state, &save_folder, &character_name);
+                        break 'main;
                     }
                 }
                 KeyCode::Char('a') if !in_input_mode => {
-                    let (maybe_action, raw_disabled) =
-                        try_move_player(Direction::Left, &mut player, &mut game_map, &mut rng);
-                    if let Some(action) = maybe_action { push_action(&mut recent_actions, action); }
-                    if raw_disabled {
-                        xterm_terminal::enable_raw_mode().expect("Failed to enable raw mode");
+                    if handle_movement(Direction::Left, &mut player, &mut game_map,
+                                       &mut dungeon_state, &mut rng, &mut recent_actions) {
+                        xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
+                        save_game(&player, &game_map, &dungeon_state, &save_folder, &character_name);
+                        break 'main;
                     }
                 }
                 KeyCode::Char('d') if !in_input_mode => {
-                    let (maybe_action, raw_disabled) =
-                        try_move_player(Direction::Right, &mut player, &mut game_map, &mut rng);
-                    if let Some(action) = maybe_action { push_action(&mut recent_actions, action); }
-                    if raw_disabled {
-                        xterm_terminal::enable_raw_mode().expect("Failed to enable raw mode");
+                    if handle_movement(Direction::Right, &mut player, &mut game_map,
+                                       &mut dungeon_state, &mut rng, &mut recent_actions) {
+                        xterm_terminal::disable_raw_mode().expect("Failed to disable raw mode");
+                        save_game(&player, &game_map, &dungeon_state, &save_folder, &character_name);
+                        break 'main;
                     }
                 }
 
@@ -1155,7 +1814,7 @@ fn game_loop(
                         if cmd == "q" || cmd == "quit" {
                             xterm_terminal::disable_raw_mode()
                                 .expect("Failed to disable raw mode");
-                            save_game(&player, &game_map, &save_folder, &character_name);
+                            save_game(&player, &game_map, &dungeon_state, &save_folder, &character_name);
                             break 'main;
                         }
 

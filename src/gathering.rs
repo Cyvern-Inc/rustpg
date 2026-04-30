@@ -27,7 +27,7 @@ pub fn bfs_next_step(map: &Map, target_x: usize, target_y: usize) -> Option<Dire
 
     // Cells passable to walk through (same contract as move_player)
     let is_passable = |x: usize, y: usize| {
-        matches!(map.tiles[y][x], Tile::Empty | Tile::Campfire | Tile::Stump)
+        matches!(map.tiles[y][x], Tile::Empty | Tile::Campfire | Tile::Stump | Tile::DungeonEntrance)
     };
 
     // Goal: a cardinal neighbor of the target that we can actually step on

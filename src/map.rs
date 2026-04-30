@@ -1,8 +1,10 @@
 use std::fmt;
+use std::collections::VecDeque;
 use rand::Rng;
 use serde::{Serialize, Deserialize};
 use term_size;
 
+use crate::dungeon::{DungeonEntranceRef, DungeonSize};
 use crate::npc::{npc_definitions, woodsman_config, Encampment, OverworldNpc};
 
 #[derive(Clone, Copy, PartialEq, Serialize, Deserialize, Debug)]
@@ -21,6 +23,8 @@ pub enum Tile {
     Hut,
     /// A friendly/neutral NPC on the map. Interactable via "talk".
     Npc,
+    /// Dungeon entrance. Blocks normal movement; triggers discovery prompt.
+    DungeonEntrance,
 }
 
 impl Tile {
@@ -37,6 +41,7 @@ impl Tile {
             Tile::EnemyCampfire  => "\x1B[31m*\x1B[0m",
             Tile::Hut            => "\x1B[33mH\x1B[0m",
             Tile::Npc            => "\x1B[93mN\x1B[0m",
+            Tile::DungeonEntrance => "\x1B[90mD\x1B[0m",
         }
     }
 
@@ -52,7 +57,8 @@ impl Tile {
             Tile::Water         => '~',
             Tile::EnemyCampfire => 'f',
             Tile::Hut           => 'H',
-            Tile::Npc           => 'N',
+            Tile::Npc            => 'N',
+            Tile::DungeonEntrance => 'D',
         }
     }
 
@@ -69,6 +75,7 @@ impl Tile {
             'f' => Tile::EnemyCampfire,
             'H' => Tile::Hut,
             'N' => Tile::Npc,
+            'D' => Tile::DungeonEntrance,
             _   => Tile::Empty,
         }
     }
@@ -102,6 +109,9 @@ pub struct Map {
     /// Persistent goblin encampments placed at world-gen time.
     #[serde(default)]
     pub encampments: Vec<Encampment>,
+    /// Dungeon entrances placed at world-gen time.
+    #[serde(default)]
+    pub dungeon_entrances: Vec<DungeonEntranceRef>,
 }
 
 impl Map {
@@ -134,11 +144,13 @@ impl Map {
             stumps: Vec::new(),
             npcs: Vec::new(),
             encampments: Vec::new(),
+            dungeon_entrances: Vec::new(),
         };
         // Encampments first — scattered NPCs won't land on their tiles
         map.place_encampments(&mut rng);
         map.spawn_npcs(&mut rng);
         map.spawn_woodsman();
+        map.place_dungeon_entrances(&mut rng);
         map
     }
 
@@ -320,21 +332,23 @@ impl Map {
             campfire_y,
             move_count: 0,
             stumps: Vec::new(),
-            // NPCs and encampments are restored from character.json via restore_runtime_fields
+            // NPCs, encampments, and dungeon refs are restored via restore_runtime_fields
             npcs: Vec::new(),
             encampments: Vec::new(),
+            dungeon_entrances: Vec::new(),
         }
     }
 
     /// Copy the runtime fields that `deserialize_map` leaves at default values
     /// back from a full saved `Map`. Moves `stumps` and `npcs` instead of cloning.
     pub fn restore_runtime_fields(&mut self, saved: Map) {
-        self.campfire_x   = saved.campfire_x;
-        self.campfire_y   = saved.campfire_y;
-        self.move_count   = saved.move_count;
-        self.stumps       = saved.stumps;
-        self.npcs         = saved.npcs;
-        self.encampments  = saved.encampments;
+        self.campfire_x        = saved.campfire_x;
+        self.campfire_y        = saved.campfire_y;
+        self.move_count        = saved.move_count;
+        self.stumps            = saved.stumps;
+        self.npcs              = saved.npcs;
+        self.encampments       = saved.encampments;
+        self.dungeon_entrances = saved.dungeon_entrances;
     }
 
     pub fn set_tile(&mut self, x: usize, y: usize, tile: Tile) {
@@ -424,6 +438,98 @@ impl Map {
             self.tiles[y][x] = Tile::Npc;
             self.npcs.push(npc);
             return;
+        }
+    }
+
+    /// Place 2–4 dungeon entrances near forests or rocky zones.
+    /// Called from `new()` after all other world-gen is complete.
+    fn place_dungeon_entrances(&mut self, rng: &mut impl Rng) {
+        const NUM_ENTRANCES: usize = 3;
+        const MIN_FROM_PLAYER: usize = 25;
+        const MIN_FROM_EACH: usize   = 35;
+        const MAX_ATTEMPTS: usize    = 1500;
+
+        let center_x = self.player_x;
+        let center_y = self.player_y;
+        let mut placed: Vec<(usize, usize)> = Vec::new();
+
+        'outer: for _ in 0..NUM_ENTRANCES {
+            for _ in 0..MAX_ATTEMPTS {
+                let x = rng.gen_range(5..self.width.saturating_sub(5));
+                let y = rng.gen_range(5..self.height.saturating_sub(5));
+
+                if self.tiles[y][x] != Tile::Empty { continue; }
+
+                // Far from player spawn
+                let dist_p = center_x.abs_diff(x) + center_y.abs_diff(y);
+                if dist_p < MIN_FROM_PLAYER { continue; }
+
+                // Far from other entrances
+                if placed.iter().any(|&(ex, ey)| ex.abs_diff(x) + ey.abs_diff(y) < MIN_FROM_EACH) {
+                    continue;
+                }
+
+                // Must have at least one tree or rock within 12 tiles
+                let near_wall = {
+                    let r = 12isize;
+                    let mut found = false;
+                    'wall: for dy in -r..=r {
+                        for dx in -r..=r {
+                            let nx2 = x as isize + dx;
+                            let ny2 = y as isize + dy;
+                            if nx2 >= 0 && ny2 >= 0
+                                && (nx2 as usize) < self.width
+                                && (ny2 as usize) < self.height
+                                && matches!(self.tiles[ny2 as usize][nx2 as usize],
+                                            Tile::Tree | Tile::Rock)
+                            {
+                                found = true;
+                                break 'wall;
+                            }
+                        }
+                    }
+                    found
+                };
+                if !near_wall { continue; }
+
+                // Enclosure rule: exactly 3 impassable (Tree/Rock) cardinal neighbors,
+                // exactly 1 Empty cardinal neighbor (the cave mouth)
+                let cardinals = [
+                    (x as isize,     y as isize - 1),
+                    (x as isize,     y as isize + 1),
+                    (x as isize - 1, y as isize),
+                    (x as isize + 1, y as isize),
+                ];
+                let mut impassable = 0u8;
+                let mut passable   = 0u8;
+                for (nx, ny) in cardinals {
+                    if nx < 0 || ny < 0 || nx >= self.width as isize || ny >= self.height as isize {
+                        impassable += 1;
+                        continue;
+                    }
+                    match self.tiles[ny as usize][nx as usize] {
+                        Tile::Tree | Tile::Rock => impassable += 1,
+                        Tile::Empty            => passable   += 1,
+                        _                      => {}
+                    }
+                }
+                if impassable != 3 || passable != 1 { continue; }
+
+                // Tier by distance, size weighted toward Small/Medium
+                let tier = ((dist_p / 30) as u32).clamp(1, 20);
+                let size = match rng.gen_range(0..10u8) {
+                    0..=4 => DungeonSize::Small,
+                    5..=7 => DungeonSize::Medium,
+                    8     => DungeonSize::Large,
+                    _     => DungeonSize::ExtraLarge,
+                };
+
+                self.tiles[y][x] = Tile::DungeonEntrance;
+                placed.push((x, y));
+                self.dungeon_entrances.push(DungeonEntranceRef { x, y, tier, size });
+                continue 'outer;
+            }
+            // Could not place this entrance after MAX_ATTEMPTS — skip it
         }
     }
 
@@ -830,17 +936,18 @@ fn seed_tile_biome(
     if roll < 0.05 { Tile::Rock } else if roll < 0.23 { Tile::Tree } else { Tile::Empty }
 }
 
-/// After CA smoothing, punch two open corridors through the north and south
-/// faces of each forest so the player has clear entry/exit points.
-fn carve_forest_entrances(
+/// Punch entry corridors through each forest and carve a biased drunkard's
+/// walk path connecting north and south gaps so the interior is navigable.
+fn carve_forest_paths(
     tiles: &mut Vec<Vec<Tile>>,
     forests: &[ZoneRect],
     width: usize,
     height: usize,
     rng: &mut impl Rng,
 ) {
-    const GAP_W: usize = 5; // corridor width in tiles
-    const GAP_D: usize = 5; // depth to clear inward from the face
+    const GAP_W: usize = 5;
+    const GAP_D: usize = 5;
+    const PATH_BIAS: f64 = 0.65;
 
     for &(fx, fy, fw, fh) in forests {
         if fw < GAP_W + 8 { continue; }
@@ -858,7 +965,7 @@ fn carve_forest_entrances(
             }
         }
 
-        // South entrance (independent random column)
+        // South entrance
         let col_s = rng.gen_range(col_min..col_max);
         let row0  = (fy + fh).saturating_sub(GAP_D);
         for col in col_s..col_s + GAP_W {
@@ -868,7 +975,189 @@ fn carve_forest_entrances(
                 }
             }
         }
+
+        // Interior biased walk connecting the two gaps
+        let start_x = (col_n + GAP_W / 2).min(width - 1);
+        let start_y = (fy + GAP_D).min(height - 1);
+        let end_x   = (col_s + GAP_W / 2).min(width - 1);
+        let end_y   = (fy + fh).saturating_sub(GAP_D + 1);
+
+        let mut wx = start_x as isize;
+        let mut wy = start_y as isize;
+        let max_steps = (fw + fh) * 3;
+
+        for _ in 0..max_steps {
+            // Clear just the walker's current tile
+            let (nx, ny) = (wx as usize, wy as usize);
+            if nx >= fx && ny >= fy && nx < (fx + fw).min(width) && ny < (fy + fh).min(height) {
+                if tiles[ny][nx] == Tile::Tree {
+                    tiles[ny][nx] = Tile::Empty;
+                }
+            }
+
+            // Stop when close enough to destination
+            let dx = (wx - end_x as isize).abs();
+            let dy = (wy - end_y as isize).abs();
+            if dx + dy <= 2 { break; }
+
+            // Biased step: 65% toward destination, 35% random
+            let step: (isize, isize) = if rng.gen_bool(PATH_BIAS) {
+                // Move along the larger axis toward end
+                if dy >= dx {
+                    (0, if wy < end_y as isize { 1 } else { -1 })
+                } else {
+                    (if wx < end_x as isize { 1 } else { -1 }, 0)
+                }
+            } else {
+                let choices: [(isize,isize); 4] = [(0,-1),(0,1),(-1,0),(1,0)];
+                choices[rng.gen_range(0..4)]
+            };
+
+            let nx = wx + step.0;
+            let ny = wy + step.1;
+            if nx >= fx as isize && ny >= fy as isize
+                && (nx as usize) < (fx + fw).min(width)
+                && (ny as usize) < (fy + fh).min(height)
+            {
+                wx = nx;
+                wy = ny;
+            }
+        }
     }
+}
+
+/// Flood-fill reachable empty tiles from start, using a VecDeque BFS.
+fn flood_fill_reachable(
+    tiles: &[Vec<Tile>],
+    start_x: usize,
+    start_y: usize,
+    width: usize,
+    height: usize,
+) -> std::collections::HashSet<(usize, usize)> {
+    let mut visited = std::collections::HashSet::new();
+    let mut q: VecDeque<(usize, usize)> = VecDeque::new();
+
+    let is_open = |t: Tile| matches!(t, Tile::Empty | Tile::Campfire | Tile::Stump | Tile::DungeonEntrance);
+
+    if !is_open(tiles[start_y][start_x]) { return visited; }
+    visited.insert((start_x, start_y));
+    q.push_back((start_x, start_y));
+
+    while let Some((x, y)) = q.pop_front() {
+        for (dx, dy) in [(0isize,-1),(0,1),(-1,0),(1,0)] {
+            let nx = x as isize + dx;
+            let ny = y as isize + dy;
+            if nx >= 0 && ny >= 0 {
+                let (nx, ny) = (nx as usize, ny as usize);
+                if nx < width && ny < height && !visited.contains(&(nx, ny))
+                    && is_open(tiles[ny][nx])
+                {
+                    visited.insert((nx, ny));
+                    q.push_back((nx, ny));
+                }
+            }
+        }
+    }
+    visited
+}
+
+/// Carve corridors to any Empty tiles unreachable from start.
+/// Returns true if it patched at least one pocket (caller should loop).
+/// Skips pockets that are entirely enclosed by Water — those are genuine
+/// unreachable islands, not navigable forest hollows.
+fn fix_unreachable_pockets(
+    tiles: &mut Vec<Vec<Tile>>,
+    start_x: usize,
+    start_y: usize,
+    width: usize,
+    height: usize,
+) -> bool {
+    let reachable = flood_fill_reachable(tiles, start_x, start_y, width, height);
+
+    // Find the first patchable pocket whose L-shaped carve path doesn't cross
+    // any Water tile.  Separate the read phase (finding the pocket) from the
+    // write phase (carving) so the borrow checker is happy.
+    let mut patch: Option<(usize, usize, usize, usize, bool)> = None; // (px,py,tx,ty,vert_first)
+
+    'outer: for y in 0..height {
+        for x in 0..width {
+            if tiles[y][x] != Tile::Empty || reachable.contains(&(x, y)) { continue; }
+
+            // Nearest reachable tile by Manhattan distance
+            let (mut best_dist, mut tx, mut ty) = (usize::MAX, 0usize, 0usize);
+            for &(rx, ry) in &reachable {
+                let d = x.abs_diff(rx) + y.abs_diff(ry);
+                if d < best_dist { best_dist = d; tx = rx; ty = ry; }
+            }
+            if best_dist == usize::MAX { continue; }
+
+            // Vert-first L-path water check: column x from y→ty, then row ty from x→tx
+            let vert_ok = {
+                let mut ok = true;
+                let mut cy = y;
+                while cy != ty {
+                    if tiles[cy][x] == Tile::Water { ok = false; break; }
+                    cy = if cy < ty { cy + 1 } else { cy - 1 };
+                }
+                if ok {
+                    let mut cx = x;
+                    while cx != tx {
+                        if tiles[ty][cx] == Tile::Water { ok = false; break; }
+                        cx = if cx < tx { cx + 1 } else { cx - 1 };
+                    }
+                }
+                ok
+            };
+
+            if vert_ok { patch = Some((x, y, tx, ty, true)); break 'outer; }
+
+            // Horiz-first L-path water check: row y from x→tx, then column tx from y→ty
+            let horiz_ok = {
+                let mut ok = true;
+                let mut cx = x;
+                while cx != tx {
+                    if tiles[y][cx] == Tile::Water { ok = false; break; }
+                    cx = if cx < tx { cx + 1 } else { cx - 1 };
+                }
+                if ok {
+                    let mut cy = y;
+                    while cy != ty {
+                        if tiles[cy][tx] == Tile::Water { ok = false; break; }
+                        cy = if cy < ty { cy + 1 } else { cy - 1 };
+                    }
+                }
+                ok
+            };
+
+            if horiz_ok { patch = Some((x, y, tx, ty, false)); break 'outer; }
+            // Both orientations cross water — genuine island, skip.
+        }
+    }
+
+    let Some((x, y, tx, ty, vert_first)) = patch else { return false; };
+
+    if vert_first {
+        let (mut cx, mut cy) = (x, y);
+        while cy != ty {
+            if matches!(tiles[cy][cx], Tile::Tree | Tile::Rock) { tiles[cy][cx] = Tile::Empty; }
+            cy = if cy < ty { cy + 1 } else { cy - 1 };
+        }
+        while cx != tx {
+            if matches!(tiles[cy][cx], Tile::Tree | Tile::Rock) { tiles[cy][cx] = Tile::Empty; }
+            cx = if cx < tx { cx + 1 } else { cx - 1 };
+        }
+    } else {
+        let (mut cx, mut cy) = (x, y);
+        while cx != tx {
+            if matches!(tiles[cy][cx], Tile::Tree | Tile::Rock) { tiles[cy][cx] = Tile::Empty; }
+            cx = if cx < tx { cx + 1 } else { cx - 1 };
+        }
+        while cy != ty {
+            if matches!(tiles[cy][cx], Tile::Tree | Tile::Rock) { tiles[cy][cx] = Tile::Empty; }
+            cy = if cy < ty { cy + 1 } else { cy - 1 };
+        }
+    }
+    true
 }
 
 /// Classify the dominant terrain around a map coordinate. Returns one of
@@ -949,7 +1238,13 @@ fn generate_terrain(width: usize, height: usize, rng: &mut impl Rng) -> Vec<Vec<
         }
     }
 
-    carve_forest_entrances(&mut tiles, &forests, width, height, rng);
+    carve_forest_paths(&mut tiles, &forests, width, height, rng);
+
+    // Loop until all tree/rock-enclosed pockets are connected (water-enclosed
+    // islands are skipped — they return false without patching).
+    for _ in 0..200 {
+        if !fix_unreachable_pockets(&mut tiles, cx, cy, width, height) { break; }
+    }
 
     tiles
 }
@@ -1030,7 +1325,7 @@ fn clear_spawn_area(
                 if nx >= 0 && ny >= 0 && (nx as usize) < width && (ny as usize) < height {
                     let ux = nx as usize;
                     let uy = ny as usize;
-                    if tiles[uy][ux] != Tile::Player && tiles[uy][ux] != Tile::Campfire {
+                    if !matches!(tiles[uy][ux], Tile::Player | Tile::Campfire | Tile::DungeonEntrance) {
                         tiles[uy][ux] = Tile::Empty;
                     }
                 }

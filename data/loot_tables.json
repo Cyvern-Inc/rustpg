@@ -60,5 +60,14 @@
     { "item_id": 100047, "qty_min":  1, "qty_max":  1, "weight":  8.0 },
     { "item_id": 100048, "qty_min":  1, "qty_max":  1, "weight":  5.0 },
     { "item_id":      0, "qty_min": null, "qty_max": null, "weight":  5.0 }
+  ],
+  "dungeon_common": [
+    { "item_id": 100057, "qty_min": 1, "qty_max": 1, "weight":  4.0 },
+    { "item_id": 100068, "qty_min": 1, "qty_max": 1, "weight":  3.0 },
+    { "item_id": 100070, "qty_min": 1, "qty_max": 1, "weight":  2.0 },
+    { "item_id": 100071, "qty_min": 1, "qty_max": 1, "weight":  2.0 },
+    { "item_id": 100001, "qty_min": 2, "qty_max": 8, "weight": 35.0 },
+    { "item_id": 100003, "qty_min": 5, "qty_max": 15,"weight": 25.0 },
+    { "item_id":      0, "qty_min": null, "qty_max": null, "weight": 5.0 }
   ]
 }

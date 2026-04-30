@@ -463,7 +463,7 @@ fn is_passable(
     tiles: &[Vec<Tile>],
     occupied: &[(usize, usize)],
 ) -> bool {
-    matches!(tiles[y][x], Tile::Empty | Tile::Stump) && !occupied.contains(&(x, y))
+    matches!(tiles[y][x], Tile::Empty | Tile::Stump | Tile::DungeonEntrance) && !occupied.contains(&(x, y))
 }
 
 /// Move one step toward (to_x, to_y). Prefers the axis with the larger gap;
